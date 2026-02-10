@@ -1,0 +1,21 @@
+{
+  "name": "lobsterd",
+  "version": "0.1.0",
+  "type": "module",
+  "bin": {
+    "lobster": "./src/index.tsx"
+  },
+  "dependencies": {
+    "ink": "^5.2.0",
+    "react": "^18.3.1",
+    "@inkjs/ui": "^2.0.0",
+    "commander": "^13.1.0",
+    "neverthrow": "^8.2.0",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.18",
+    "typescript": "^5.7.3",
+    "@types/bun": "^1.2.2"
+  }
+}
