@@ -5,7 +5,7 @@
 
 import { createServer } from 'net';
 import { spawn } from 'child_process';
-import { writeFileSync, mkdirSync } from 'fs';
+import { writeFileSync, readFileSync, mkdirSync, openSync } from 'fs';
 
 const VSOCK_PORT = 52;
 const HEALTH_PORT = 53;
@@ -70,6 +70,9 @@ function handleMessage(msg) {
       return 'PONG';
     case 'launch-openclaw':
       return handleLaunchOpenclaw();
+    case 'get-logs':
+      try { return readFileSync('/tmp/openclaw-gateway.log', 'utf-8').slice(-4000); }
+      catch { return 'No logs available'; }
     case 'shutdown':
       return handleShutdown();
     default:
@@ -109,20 +112,19 @@ function handleLaunchOpenclaw() {
     return JSON.stringify({ error: 'No gateway token available' });
   }
 
+  const logFd = openSync('/tmp/openclaw-gateway.log', 'a');
   gatewayProcess = spawn('node', [
     '/opt/openclaw/openclaw.mjs',
     'gateway',
-    '--port', '9000',
-    '--auth', 'token',
-    '--bind', '0.0.0.0',
   ], {
     env: {
       ...process.env,
       HOME: '/root',
       OPENCLAW_GATEWAY_TOKEN: token,
+      OPENCLAW_GATEWAY_PORT: '9000',
       NODE_ENV: 'production',
     },
-    stdio: ['ignore', 'inherit', 'inherit'],
+    stdio: ['ignore', logFd, logFd],
   });
 
   gatewayProcess.on('exit', (code) => {

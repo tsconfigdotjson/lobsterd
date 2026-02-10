@@ -45,6 +45,12 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
   openclaw: {
     installPath: '/opt/openclaw',
     defaultConfig: {
+      gateway: {
+        bind: 'lan',
+        auth: {
+          mode: 'token',
+        },
+      },
       models: {
         providers: {
           fireworks: {
