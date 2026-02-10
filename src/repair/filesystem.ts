@@ -22,6 +22,12 @@ export function repairFilesystem(tenant: Tenant): ResultAsync<RepairResult, Lobs
         .map(() => { actions.push(`Fixed ownership to ${tenant.uid}:${tenant.gid}`); })
         .orElse(() => ok(undefined)),
     )
+    .andThen(() =>
+      // Fix home dir permissions to 0700
+      exec(['chmod', '0700', tenant.homePath])
+        .map(() => { actions.push(`Set home directory permissions to 0700`); })
+        .orElse(() => ok(undefined)),
+    )
     .map(() => ({
       repair: 'filesystem',
       fixed: actions.length > 0,

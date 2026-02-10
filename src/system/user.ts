@@ -1,6 +1,60 @@
 import { ResultAsync, ok, err } from 'neverthrow';
+import { openSync, closeSync, unlinkSync, writeFileSync } from 'node:fs';
 import type { LobsterError } from '../types/index.js';
 import { exec, execUnchecked } from './exec.js';
+
+// ── Lockfile helpers ────────────────────────────────────────────────────────
+
+const LOCK_TIMEOUT_MS = 10_000;
+const LOCK_POLL_MS = 100;
+
+function isPidAlive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function acquireLock(lockPath: string): Promise<void> {
+  const start = Date.now();
+  while (Date.now() - start < LOCK_TIMEOUT_MS) {
+    try {
+      const fd = openSync(lockPath, 'wx');
+      writeFileSync(fd, String(process.pid));
+      closeSync(fd);
+      return;
+    } catch (e: any) {
+      if (e.code === 'EEXIST') {
+        try {
+          const content = await Bun.file(lockPath).text();
+          const pid = parseInt(content.trim(), 10);
+          if (!isNaN(pid) && !isPidAlive(pid)) {
+            unlinkSync(lockPath);
+            continue;
+          }
+        } catch {
+          // Lock file disappeared — retry
+        }
+        await Bun.sleep(LOCK_POLL_MS);
+        continue;
+      }
+      throw e;
+    }
+  }
+  throw new Error(`Timed out acquiring lock ${lockPath} after ${LOCK_TIMEOUT_MS}ms`);
+}
+
+function releaseLock(lockPath: string): void {
+  try {
+    unlinkSync(lockPath);
+  } catch {
+    // Already removed
+  }
+}
+
+// ── User management ─────────────────────────────────────────────────────────
 
 export function checkUserExists(name: string): ResultAsync<boolean, LobsterError> {
   return execUnchecked(['id', '-u', name]).map((r) => r.exitCode === 0);
@@ -34,13 +88,19 @@ export function ensureSubuidRange(
   return ResultAsync.fromPromise(
     (async () => {
       for (const file of ['/etc/subuid', '/etc/subgid']) {
-        const content = await Bun.file(file).text().catch(() => '');
-        if (!content.includes(`${name}:`)) {
-          await Bun.write(file, content.trimEnd() + '\n' + entry + '\n');
+        const lockPath = `${file}.lobsterd.lock`;
+        await acquireLock(lockPath);
+        try {
+          const content = await Bun.file(file).text().catch(() => '');
+          if (!content.includes(`${name}:`)) {
+            await Bun.write(file, content.trimEnd() + '\n' + entry + '\n');
+          }
+        } finally {
+          releaseLock(lockPath);
         }
       }
     })(),
-    (e) => ({ code: 'EXEC_FAILED' as const, message: `Failed to configure subuid/subgid for ${name}`, cause: e }),
+    (e) => ({ code: 'LOCK_FAILED' as const, message: `Failed to configure subuid/subgid for ${name}`, cause: e }),
   );
 }
 

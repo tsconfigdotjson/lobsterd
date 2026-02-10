@@ -1,5 +1,7 @@
 import { z } from 'zod';
 
+export const TENANT_NAME_REGEX = /^[a-z][a-z0-9_-]*$/;
+
 export const zfsConfigSchema = z.object({
   pool: z.string().min(1),
   parentDataset: z.string().min(1),
@@ -33,7 +35,7 @@ export const lobsterdConfigSchema = z.object({
 });
 
 export const tenantSchema = z.object({
-  name: z.string().min(1).regex(/^[a-z][a-z0-9_-]*$/, 'Lowercase alphanumeric, hyphens, underscores'),
+  name: z.string().min(1).regex(TENANT_NAME_REGEX, 'Lowercase alphanumeric, hyphens, underscores'),
   uid: z.number().int().min(1000),
   gid: z.number().int().min(1000),
   gatewayPort: z.number().int().min(1024).max(65535),

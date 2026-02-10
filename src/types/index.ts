@@ -111,6 +111,9 @@ export type ErrorCode =
   | 'GATEWAY_UNRESPONSIVE'
   | 'SERVICE_FAILED'
   | 'PERMISSION_DENIED'
+  | 'FIREWALL_FAILED'
+  | 'VALIDATION_FAILED'
+  | 'LOCK_FAILED'
   | 'UNKNOWN';
 
 export interface LobsterError {

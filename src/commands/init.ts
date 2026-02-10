@@ -1,7 +1,9 @@
 import { ok, err, errAsync, okAsync, ResultAsync } from 'neverthrow';
+import { chmodSync } from 'node:fs';
 import type { LobsterError, LobsterdConfig } from '../types/index.js';
 import { exec, execUnchecked } from '../system/exec.js';
 import * as zfs from '../system/zfs.js';
+import * as firewall from '../system/firewall.js';
 import { CONFIG_DIR, CONFIG_PATH, REGISTRY_PATH, DEFAULT_CONFIG, EMPTY_REGISTRY } from '../config/defaults.js';
 
 function checkLinux(): ResultAsync<void, LobsterError> {
@@ -39,7 +41,10 @@ function checkDocker(): ResultAsync<void, LobsterError> {
 }
 
 function ensureConfigDir(): ResultAsync<void, LobsterError> {
-  return exec(['mkdir', '-p', CONFIG_DIR]).map(() => undefined);
+  return exec(['mkdir', '-p', CONFIG_DIR]).andThen(() => {
+    chmodSync(CONFIG_DIR, 0o700);
+    return okAsync(undefined);
+  });
 }
 
 async function fileExists(path: string): Promise<boolean> {
@@ -51,6 +56,7 @@ function writeDefaultConfig(): ResultAsync<void, LobsterError> {
     (async () => {
       if (!(await fileExists(CONFIG_PATH))) {
         await Bun.write(CONFIG_PATH, JSON.stringify(DEFAULT_CONFIG, null, 2) + '\n');
+        chmodSync(CONFIG_PATH, 0o600);
       }
     })(),
     (e) => ({ code: 'EXEC_FAILED' as const, message: 'Failed to write default config', cause: e }),
@@ -62,10 +68,19 @@ function writeEmptyRegistry(): ResultAsync<void, LobsterError> {
     (async () => {
       if (!(await fileExists(REGISTRY_PATH))) {
         await Bun.write(REGISTRY_PATH, JSON.stringify(EMPTY_REGISTRY, null, 2) + '\n');
+        chmodSync(REGISTRY_PATH, 0o600);
       }
     })(),
     (e) => ({ code: 'EXEC_FAILED' as const, message: 'Failed to write empty registry', cause: e }),
   );
+}
+
+function hardenProcfs(): ResultAsync<void, LobsterError> {
+  return execUnchecked(['mount', '-o', 'remount,hidepid=invisible', '/proc']).andThen((r) => {
+    if (r.exitCode === 0) return okAsync(undefined);
+    // Fall back to hidepid=2 on older kernels
+    return exec(['mount', '-o', 'remount,hidepid=2', '/proc']).map(() => undefined);
+  });
 }
 
 export interface InitResult {
@@ -73,6 +88,8 @@ export interface InitResult {
   zfsAvailable: boolean;
   parentDatasetCreated: boolean;
   configCreated: boolean;
+  procfsHardened: boolean;
+  firewallInitialized: boolean;
 }
 
 export function runInit(config: LobsterdConfig = DEFAULT_CONFIG): ResultAsync<InitResult, LobsterError> {
@@ -81,6 +98,8 @@ export function runInit(config: LobsterdConfig = DEFAULT_CONFIG): ResultAsync<In
     zfsAvailable: false,
     parentDatasetCreated: false,
     configCreated: false,
+    procfsHardened: false,
+    firewallInitialized: false,
   };
 
   return checkLinux()
@@ -117,5 +136,13 @@ export function runInit(config: LobsterdConfig = DEFAULT_CONFIG): ResultAsync<In
       result.configCreated = true;
       return writeEmptyRegistry();
     })
-    .map(() => result);
+    .andThen(() => hardenProcfs())
+    .andThen(() => {
+      result.procfsHardened = true;
+      return firewall.initFirewall();
+    })
+    .map(() => {
+      result.firewallInitialized = true;
+      return result;
+    });
 }

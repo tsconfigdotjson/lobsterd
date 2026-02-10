@@ -1,10 +1,13 @@
 import { ok, errAsync, okAsync, ResultAsync } from 'neverthrow';
+import { chmodSync } from 'node:fs';
 import type { LobsterError, Tenant, TenantRegistry, LobsterdConfig } from '../types/index.js';
 import { loadConfig, loadRegistry, saveRegistry } from '../config/loader.js';
+import { TENANT_NAME_REGEX } from '../config/schema.js';
 import * as zfs from '../system/zfs.js';
 import * as user from '../system/user.js';
 import * as docker from '../system/docker.js';
 import * as systemd from '../system/systemd.js';
+import * as firewall from '../system/firewall.js';
 import { exec } from '../system/exec.js';
 
 export interface SpawnProgress {
@@ -12,15 +15,42 @@ export interface SpawnProgress {
   detail: string;
 }
 
+type UndoFn = () => ResultAsync<void, LobsterError>;
+
 export function runSpawn(
   name: string,
   onProgress?: (p: SpawnProgress) => void,
 ): ResultAsync<Tenant, LobsterError> {
   const progress = (step: string, detail: string) => onProgress?.({ step, detail });
 
+  // ── Input validation ──────────────────────────────────────────────────
+  if (!TENANT_NAME_REGEX.test(name)) {
+    return errAsync({
+      code: 'VALIDATION_FAILED',
+      message: `Invalid tenant name "${name}": must match ${TENANT_NAME_REGEX}`,
+    });
+  }
+
   let config: LobsterdConfig;
   let registry: TenantRegistry;
   let tenant: Tenant;
+  const undoStack: UndoFn[] = [];
+
+  function rollback(error: LobsterError): ResultAsync<never, LobsterError> {
+    if (undoStack.length === 0) return errAsync(error);
+    const fns = [...undoStack].reverse();
+    let count = 0;
+    let chain: ResultAsync<void, LobsterError> = okAsync(undefined);
+    for (const fn of fns) {
+      chain = chain.andThen(() => fn().orElse(() => okAsync(undefined))).map(() => { count++; });
+    }
+    return chain.andThen(() =>
+      errAsync({
+        ...error,
+        message: `${error.message} (rolled back ${count}/${fns.length} steps)`,
+      }),
+    );
+  }
 
   return loadConfig()
     .andThen((c) => {
@@ -59,12 +89,19 @@ export function runSpawn(
       });
     })
     .andThen(() => {
+      undoStack.push(() => zfs.destroyDataset(tenant.zfsDataset, true));
+
       progress('user', `Creating user ${name} (uid ${tenant.uid})`);
       return user.createUser(name, tenant.uid, tenant.homePath);
     })
     .andThen(() => {
-      progress('permissions', `Setting ownership on ${tenant.homePath}`);
-      return exec(['chown', `${tenant.uid}:${tenant.gid}`, tenant.homePath]).map(() => undefined);
+      undoStack.push(() => user.deleteUser(name));
+
+      progress('permissions', `Setting ownership and permissions on ${tenant.homePath}`);
+      return exec(['chown', `${tenant.uid}:${tenant.gid}`, tenant.homePath]).andThen(() => {
+        chmodSync(tenant.homePath, 0o700);
+        return okAsync(undefined);
+      });
     })
     .andThen(() => {
       progress('subuid', 'Configuring subordinate UID/GID ranges');
@@ -75,20 +112,37 @@ export function runSpawn(
       return user.enableLinger(name);
     })
     .andThen(() => {
+      undoStack.push(() => user.disableLinger(name));
+
       progress('session', 'Waiting for user systemd session');
       return user.waitForUserSession(tenant.uid);
     })
     .andThen(() => {
-      progress('dirs', 'Creating .config and .local directories');
+      progress('dirs', 'Creating tenant directories');
       return exec(['sudo', '-u', name, '--', 'mkdir', '-p',
         `${tenant.homePath}/.config`,
         `${tenant.homePath}/.local/share`,
         `${tenant.homePath}/.openclaw`,
+        `${tenant.homePath}/.openclaw/tmp`,
       ]).map(() => undefined);
     })
     .andThen(() => {
       progress('docker', 'Installing rootless Docker');
       return docker.installRootless(name, tenant.uid);
+    })
+    .andThen(() => {
+      progress('docker-config', 'Writing Docker daemon.json');
+      const dockerConfigDir = `${tenant.homePath}/.config/docker`;
+      const daemonJson = `${dockerConfigDir}/daemon.json`;
+      return ResultAsync.fromPromise(
+        (async () => {
+          await exec(['sudo', '-u', name, '--', 'mkdir', '-p', dockerConfigDir]);
+          await Bun.write(daemonJson, JSON.stringify({ 'no-new-privileges': true }, null, 2) + '\n');
+          chmodSync(daemonJson, 0o600);
+          await exec(['chown', `${tenant.uid}:${tenant.gid}`, daemonJson]);
+        })(),
+        (e): LobsterError => ({ code: 'EXEC_FAILED', message: 'Failed to write Docker daemon.json', cause: e }),
+      );
     })
     .andThen(() => {
       progress('gateway-service', 'Creating OpenClaw gateway service');
@@ -106,8 +160,9 @@ Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=XDG_RUNTIME_DIR=/run/user/${tenant.uid}
 Environment=DOCKER_HOST=unix:///run/user/${tenant.uid}/docker.sock
 Environment=NODE_ENV=production
+Environment=TMPDIR=${tenant.homePath}/.openclaw/tmp
 Environment=OPENCLAW_GATEWAY_TOKEN=${token}
-ExecStart=/usr/bin/env node ${config.openclaw.installPath}/openclaw.mjs gateway --port ${tenant.gatewayPort} --auth token --bind lan --allow-unconfigured
+ExecStart=/usr/bin/env node ${config.openclaw.installPath}/openclaw.mjs gateway --port ${tenant.gatewayPort} --auth token --bind loopback
 Restart=on-failure
 RestartSec=5
 KillMode=process
@@ -133,7 +188,6 @@ WantedBy=default.target
           mode: 'local',
           tls: { enabled: true },
           auth: { token: tenant.gatewayToken },
-          controlUi: { dangerouslyDisableDeviceAuth: true },
           ...(config.openclaw.defaultConfig?.gateway as Record<string, unknown> ?? {}),
         },
       };
@@ -141,6 +195,7 @@ WantedBy=default.target
         (async () => {
           const confPath = `${tenant.homePath}/.openclaw/openclaw.json`;
           await Bun.write(confPath, JSON.stringify(openclawConf, null, 2) + '\n');
+          chmodSync(confPath, 0o600);
           await exec(['chown', `${tenant.uid}:${tenant.gid}`, confPath]);
         })(),
         (e): LobsterError => ({ code: 'EXEC_FAILED', message: 'Failed to write OpenClaw config', cause: e }),
@@ -155,11 +210,18 @@ WantedBy=default.target
         .andThen(() => systemd.startService('openclaw-gateway', name, tenant.uid));
     })
     .andThen(() => {
+      progress('firewall', 'Adding iptables rules');
+      return firewall.addTenantRules(tenant.uid, tenant.gatewayPort);
+    })
+    .andThen(() => {
+      undoStack.push(() => firewall.removeTenantRules(tenant.uid, tenant.gatewayPort));
+
       progress('registry', 'Registering tenant');
       registry.tenants.push(tenant);
       registry.nextUid += 1;
       registry.nextGatewayPort += 1;
       return saveRegistry(registry);
     })
-    .map(() => tenant);
+    .map(() => tenant)
+    .orElse((error) => rollback(error));
 }

@@ -56,9 +56,30 @@ export function checkXdgDirs(tenant: Tenant): ResultAsync<HealthCheckResult, Lob
   });
 }
 
+export function checkHomeDirPermissions(tenant: Tenant): ResultAsync<HealthCheckResult, LobsterError> {
+  return execUnchecked(['stat', '-c', '%a', tenant.homePath]).map((r) => {
+    if (r.exitCode !== 0) {
+      return {
+        check: 'fs.home-perms',
+        status: 'failed' as const,
+        message: `Cannot stat home directory ${tenant.homePath}`,
+      };
+    }
+    const mode = r.stdout.trim();
+    return {
+      check: 'fs.home-perms',
+      status: mode === '700' ? 'ok' : 'degraded',
+      message: mode === '700'
+        ? 'Home directory permissions OK (700)'
+        : `Home directory ${tenant.homePath} has mode ${mode}, expected 700`,
+    } as HealthCheckResult;
+  });
+}
+
 export function runFilesystemChecks(tenant: Tenant): ResultAsync<HealthCheckResult[], LobsterError> {
   return ResultAsync.combine([
     checkHomeDir(tenant),
+    checkHomeDirPermissions(tenant),
     checkOpenclawDir(tenant),
     checkXdgDirs(tenant),
   ]);

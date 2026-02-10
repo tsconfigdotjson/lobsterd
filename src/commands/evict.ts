@@ -4,6 +4,7 @@ import { loadRegistry, saveRegistry } from '../config/loader.js';
 import * as zfs from '../system/zfs.js';
 import * as user from '../system/user.js';
 import * as systemd from '../system/systemd.js';
+import * as firewall from '../system/firewall.js';
 
 export interface EvictProgress {
   step: string;
@@ -35,6 +36,11 @@ export function runEvict(
       return systemd.stopService('openclaw-gateway', name, tenant.uid)
         .orElse(() => okAsync(undefined))
         .andThen(() => systemd.stopService('docker', name, tenant.uid))
+        .orElse(() => okAsync(undefined));
+    })
+    .andThen(() => {
+      progress('firewall', 'Removing firewall rules');
+      return firewall.removeTenantRules(tenant.uid, tenant.gatewayPort)
         .orElse(() => okAsync(undefined));
     })
     .andThen(() => {
