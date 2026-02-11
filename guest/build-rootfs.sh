@@ -107,6 +107,9 @@ cp -a "$OPENCLAW_TMP/node_modules/openclaw"/* "$MOUNT_DIR/opt/openclaw/"
 cp -a "$OPENCLAW_TMP/node_modules" "$MOUNT_DIR/opt/openclaw/"
 # Create openclaw.mjs entry point that lobster-agent expects
 ln -sf /opt/openclaw/dist/entry.js "$MOUNT_DIR/opt/openclaw/openclaw.mjs"
+# Remove llama.cpp bindings — not needed for gateway mode (~710MB)
+rm -rf "$MOUNT_DIR/opt/openclaw/node_modules/@node-llama-cpp" \
+       "$MOUNT_DIR/opt/openclaw/node_modules/node-llama-cpp"
 rm -rf "$OPENCLAW_TMP"
 
 echo "==> Cleanup"
