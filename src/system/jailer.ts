@@ -78,6 +78,7 @@ export function buildJailerArgs(
   ];
   if (cgroups) {
     if (isCgroupV2()) {
+      args.push("--cgroup-version", "2");
       args.push("--cgroup", `memory.max=${cgroups.memLimitBytes}`);
       args.push(
         "--cgroup",

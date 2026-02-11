@@ -164,6 +164,14 @@ function installOriginCerts(): ResultAsync<boolean, LobsterError> {
       await Bun.write(ORIGIN_KEY_PATH, bundledKey);
       chmodSync(ORIGIN_CERT_PATH, 0o644);
       chmodSync(ORIGIN_KEY_PATH, 0o640);
+      // Caddy runs as user "caddy" and needs group-read access to the key
+      const { execSync } = await import("node:child_process");
+      try {
+        execSync(`chown root:caddy ${ORIGIN_KEY_PATH}`);
+      } catch {
+        // Caddy group may not exist; fall back to world-readable
+        chmodSync(ORIGIN_KEY_PATH, 0o644);
+      }
       return true;
     })(),
     (e) => ({
