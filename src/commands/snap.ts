@@ -1,9 +1,9 @@
-import { errAsync, ResultAsync } from "neverthrow";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { errAsync, type ResultAsync } from "neverthrow";
 import { loadConfig, loadRegistry } from "../config/loader.js";
 import { exec } from "../system/exec.js";
 import type { LobsterError } from "../types/index.js";
-import { tmpdir } from "os";
-import { join } from "path";
 
 function formatTimestamp(): string {
   const now = new Date();
@@ -50,9 +50,17 @@ export function runSnap(
       return exec(["mkdir", "-p", outDir])
         .andThen(() => exec(["mkdir", "-p", tmpDir]))
         .andThen(() =>
-          exec(["cp", "--sparse=always", overlayPath, join(tmpDir, "overlay.ext4")], {
-            timeout: 120_000,
-          }),
+          exec(
+            [
+              "cp",
+              "--sparse=always",
+              overlayPath,
+              join(tmpDir, "overlay.ext4"),
+            ],
+            {
+              timeout: 120_000,
+            },
+          ),
         )
         .andThen(() =>
           exec(

@@ -9,7 +9,6 @@ import type {
   Tenant,
 } from "../types/index.js";
 
-
 export function repairVmProcess(
   tenant: Tenant,
   config: LobsterdConfig,
