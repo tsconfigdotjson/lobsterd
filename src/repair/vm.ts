@@ -51,9 +51,8 @@ export function repairVmProcess(
       // Re-spawn via jailer
       return ResultAsync.fromPromise(
         (async () => {
-          const memLimitBytes = Math.round(
-            config.firecracker.defaultMemSizeMb * 1024 * 1024 * 1.5,
-          );
+          const memLimitBytes =
+            (config.firecracker.defaultMemSizeMb + 128) * 1024 * 1024;
           const cpuQuotaUs = config.firecracker.defaultVcpuCount * 100_000;
           const args = jailer.buildJailerArgs(
             config.jailer,
