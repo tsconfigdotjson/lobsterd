@@ -12,6 +12,7 @@ import { runWatch } from "./commands/watch.js";
 import { DEFAULT_CONFIG } from "./config/defaults.js";
 import { loadConfig, loadRegistry } from "./config/loader.js";
 import { buildProviderConfig, PROVIDER_DEFAULTS } from "./config/models.js";
+import { startBuoy } from "./reef/index.js";
 import { InitFlow } from "./ui/InitFlow.js";
 import { MoltResults } from "./ui/MoltProgress.js";
 import { SpawnFlow } from "./ui/SpawnFlow.js";
@@ -247,6 +248,17 @@ program
       process.exit(1);
     }
     console.log(tenant.gatewayToken);
+  });
+
+// ── buoy ─────────────────────────────────────────────────────────────────────
+
+program
+  .command("buoy")
+  .description("Start the local REST API server")
+  .option("-p, --port <port>", "Port to listen on", Number.parseInt)
+  .option("-H, --host <host>", "Host to bind to")
+  .action(async (opts: { port?: number; host?: string }) => {
+    await startBuoy(opts);
   });
 
 program.parse();
