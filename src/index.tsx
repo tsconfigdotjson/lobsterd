@@ -45,6 +45,12 @@ program
     console.log(`  Origin certs: ${r.certsInstalled ? 'installed' : 'not bundled (using ACME)'}`);
     console.log(`  IP forwarding: ${r.ipForwardingEnabled ? 'enabled' : 'failed'}`);
     console.log(`  Caddy: ${r.caddyConfigured ? 'configured' : 'failed'}`);
+    if (r.warnings.length > 0) {
+      console.log('\nSecurity warnings:');
+      for (const w of r.warnings) {
+        console.log(`  ⚠ ${w}`);
+      }
+    }
     console.log('\nHost initialized successfully.');
   });
 

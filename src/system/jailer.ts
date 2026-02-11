@@ -1,6 +1,18 @@
 import { ResultAsync, okAsync } from 'neverthrow';
+import { statfsSync } from 'node:fs';
 import type { LobsterError, JailerConfig } from '../types/index.js';
 import { exec } from './exec.js';
+
+/** Detect whether the host uses cgroup v1 or v2. */
+function isCgroupV2(): boolean {
+  try {
+    // cgroup2fs has magic number 0x63677270, tmpfs (cgroup v1) has 0x01021994
+    const stat = statfsSync('/sys/fs/cgroup');
+    return stat.type === 0x63677270;
+  } catch {
+    return false;
+  }
+}
 
 export function getChrootRoot(chrootBaseDir: string, vmId: string): string {
   return `${chrootBaseDir}/firecracker/${vmId}/root`;
@@ -57,9 +69,14 @@ export function buildJailerArgs(
     '--chroot-base-dir', jailerConfig.chrootBaseDir,
   ];
   if (cgroups) {
-    args.push('--cgroup', `memory.limit_in_bytes=${cgroups.memLimitBytes}`);
-    args.push('--cgroup', `cpu.cfs_quota_us=${cgroups.cpuQuotaUs}`);
-    args.push('--cgroup', `cpu.cfs_period_us=${cgroups.cpuPeriodUs}`);
+    if (isCgroupV2()) {
+      args.push('--cgroup', `memory.max=${cgroups.memLimitBytes}`);
+      args.push('--cgroup', `cpu.max=${cgroups.cpuQuotaUs} ${cgroups.cpuPeriodUs}`);
+    } else {
+      args.push('--cgroup', `memory.limit_in_bytes=${cgroups.memLimitBytes}`);
+      args.push('--cgroup', `cpu.cfs_quota_us=${cgroups.cpuQuotaUs}`);
+      args.push('--cgroup', `cpu.cfs_period_us=${cgroups.cpuPeriodUs}`);
+    }
   }
   args.push('--', '--api-sock', 'api.socket');
   return args;

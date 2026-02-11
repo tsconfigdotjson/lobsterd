@@ -1,5 +1,5 @@
 import { errAsync, okAsync, ResultAsync } from 'neverthrow';
-import { accessSync, chmodSync, constants as fsConstants } from 'node:fs';
+import { accessSync, chmodSync, readFileSync, constants as fsConstants } from 'node:fs';
 import type { LobsterError, LobsterdConfig } from '../types/index.js';
 import { exec, execUnchecked } from '../system/exec.js';
 import * as network from '../system/network.js';
@@ -162,6 +162,7 @@ export interface InitResult {
   certsInstalled: boolean;
   ipForwardingEnabled: boolean;
   caddyConfigured: boolean;
+  warnings: string[];
 }
 
 export function runInit(initialConfig: LobsterdConfig = DEFAULT_CONFIG): ResultAsync<InitResult, LobsterError> {
@@ -177,6 +178,7 @@ export function runInit(initialConfig: LobsterdConfig = DEFAULT_CONFIG): ResultA
     certsInstalled: false,
     ipForwardingEnabled: false,
     caddyConfigured: false,
+    warnings: [],
   };
 
   return checkLinux()
@@ -184,8 +186,23 @@ export function runInit(initialConfig: LobsterdConfig = DEFAULT_CONFIG): ResultA
     .andThen(() => checkKvm())
     .andThen(() => {
       result.kvmAvailable = true;
-      // Load vhost_vsock module (best-effort)
-      return execUnchecked(['modprobe', 'vhost_vsock']).orElse(() => okAsync({ exitCode: 0, stdout: '', stderr: '' }));
+
+      // Check for insecure host configuration
+      try {
+        const smtActive = readFileSync('/sys/devices/system/cpu/smt/active', 'utf-8').trim();
+        if (smtActive === '1') {
+          result.warnings.push('SMT is enabled — add "nosmt" to kernel boot parameters for side-channel protection');
+        }
+      } catch { /* SMT file may not exist on single-core or non-x86 */ }
+
+      try {
+        const ksmRun = readFileSync('/sys/kernel/mm/ksm/run', 'utf-8').trim();
+        if (ksmRun !== '0') {
+          result.warnings.push('KSM is active — run "echo 0 > /sys/kernel/mm/ksm/run" to prevent page dedup side-channels');
+        }
+      } catch { /* KSM may not be available */ }
+
+      return okAsync(undefined);
     })
     .andThen(() => checkFirecracker(config))
     .andThen(() => {
