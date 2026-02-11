@@ -31,7 +31,7 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
   },
   caddy: {
     adminApi: 'http://localhost:2019',
-    domain: 'lobster.local',
+    domain: 'gradeprompt.com',
   },
   vsock: {
     agentPort: 52,
@@ -56,6 +56,10 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
         bind: 'lan',
         auth: {
           mode: 'token',
+        },
+        controlUi: {
+          allowedOrigins: ['http://localhost:5173'],
+          dangerouslyDisableDeviceAuth: true,
         },
       },
       models: {
