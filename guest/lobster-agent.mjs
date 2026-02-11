@@ -15,6 +15,7 @@ let secrets = {};
 function startAgent() {
   const server = createServer({ allowHalfOpen: true }, (conn) => {
     let data = '';
+    conn.on('error', () => {});
     conn.on('data', (chunk) => {
       data += chunk.toString();
       // Process when we get a newline (message delimiter)
@@ -47,13 +48,10 @@ function startAgent() {
   });
 
   // Health ping listener on separate port
-  const healthServer = createServer({ allowHalfOpen: true }, (conn) => {
-    let data = '';
+  const healthServer = createServer((conn) => {
+    conn.on('error', () => {});
     conn.on('data', () => {
       conn.end('PONG\n');
-    });
-    conn.on('end', () => {
-      if (!data) conn.end('PONG\n');
     });
   });
 
