@@ -50,7 +50,7 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
   },
   caddy: {
     adminApi: "http://localhost:2019",
-    domain: "gradeprompt.com",
+    domain: "lobster.local",
   },
   vsock: {
     agentPort: 52,

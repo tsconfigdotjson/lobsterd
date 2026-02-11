@@ -2,13 +2,27 @@ import { Box, render, Text } from "ink";
 import { useEffect, useState } from "react";
 import { runAllChecks } from "../checks/index.js";
 import { loadConfig, loadRegistry } from "../config/loader.js";
+import * as vsock from "../system/vsock.js";
 import type {
   LobsterdConfig,
   Tenant,
   TenantWatchState,
 } from "../types/index.js";
+import type { TenantExtraInfo } from "../ui/Dashboard.js";
 import { Dashboard } from "../ui/Dashboard.js";
 import { initialWatchState, transition } from "../watchdog/state.js";
+
+function quickPidCheck(tenant: Tenant): string {
+  if (!tenant.vmPid) {
+    return "dead";
+  }
+  try {
+    process.kill(tenant.vmPid, 0);
+    return String(tenant.vmPid);
+  } catch {
+    return "dead";
+  }
+}
 
 function TankApp({
   tenants,
@@ -24,6 +38,9 @@ function TankApp({
     }
     return s;
   });
+  const [extraInfo, setExtraInfo] = useState<Record<string, TenantExtraInfo>>(
+    {},
+  );
   const [lastTick, setLastTick] = useState<string | null>(null);
   const [checking, setChecking] = useState(true);
 
@@ -31,10 +48,13 @@ function TankApp({
     let cancelled = false;
 
     async function check() {
+      const extras: Record<string, TenantExtraInfo> = {};
+
       for (const tenant of tenants) {
         if (cancelled) {
           break;
         }
+
         const result = await runAllChecks(tenant, config);
         if (result.isOk() && !cancelled) {
           setStates((prev) => {
@@ -43,8 +63,31 @@ function TankApp({
             return { ...prev, [tenant.name]: next };
           });
         }
+
+        const pidStatus = quickPidCheck(tenant);
+        const info: TenantExtraInfo = {
+          ip: tenant.ipAddress,
+          vmPid: pidStatus,
+        };
+
+        if (pidStatus !== "dead") {
+          const stats = await vsock
+            .getStats(
+              tenant.ipAddress,
+              config.vsock.agentPort,
+              tenant.agentToken,
+            )
+            .unwrapOr(undefined);
+          if (stats && stats.memoryKb > 0) {
+            info.memoryMb = Math.round(stats.memoryKb / 1024);
+          }
+        }
+
+        extras[tenant.name] = info;
       }
+
       if (!cancelled) {
+        setExtraInfo(extras);
         setLastTick(new Date().toISOString());
         setChecking(false);
       }
@@ -64,10 +107,17 @@ function TankApp({
     );
   }
 
-  return <Dashboard tenants={tenants} states={states} lastTick={lastTick} />;
+  return (
+    <Dashboard
+      tenants={tenants}
+      states={states}
+      lastTick={lastTick}
+      extraInfo={extraInfo}
+    />
+  );
 }
 
-export async function runTank(): Promise<number> {
+export async function runTank(opts?: { json?: boolean }): Promise<number> {
   const configResult = await loadConfig();
   if (configResult.isErr()) {
     console.error(`Error: ${configResult.error.message}`);
@@ -83,9 +133,54 @@ export async function runTank(): Promise<number> {
   const registry = registryResult.value;
 
   if (registry.tenants.length === 0) {
-    console.log(
-      "No tenants registered. Use `lobster spawn <name>` to add one.",
+    if (opts?.json) {
+      console.log("[]");
+    } else {
+      console.log(
+        "No tenants registered. Use `lobster spawn <name>` to add one.",
+      );
+    }
+    return 0;
+  }
+
+  if (opts?.json) {
+    const entries = await Promise.all(
+      registry.tenants.map(async (tenant) => {
+        const pidStatus = quickPidCheck(tenant);
+        let memoryMb: number | undefined;
+
+        if (pidStatus !== "dead") {
+          const stats = await vsock
+            .getStats(
+              tenant.ipAddress,
+              config.vsock.agentPort,
+              tenant.agentToken,
+            )
+            .unwrapOr(undefined);
+          if (stats && stats.memoryKb > 0) {
+            memoryMb = Math.round(stats.memoryKb / 1024);
+          }
+        }
+
+        const checkResult = await runAllChecks(tenant, config);
+        const state = checkResult.isOk()
+          ? transition(initialWatchState(), checkResult.value, config.watchdog)
+              .next.state
+          : "UNKNOWN";
+
+        return {
+          name: tenant.name,
+          cid: tenant.cid,
+          ip: tenant.ipAddress,
+          port: tenant.gatewayPort,
+          vmPid: pidStatus,
+          status: tenant.status,
+          memoryMb,
+          state,
+        };
+      }),
     );
+    console.log(JSON.stringify(entries, null, 2));
     return 0;
   }
 

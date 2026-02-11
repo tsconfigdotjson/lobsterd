@@ -11,6 +11,9 @@ interface Props {
   name: string;
   port: number;
   watchState: TenantWatchState;
+  ip?: string;
+  vmPid?: string;
+  memoryMb?: number;
 }
 
 function CheckBadge({
@@ -37,7 +40,14 @@ function CheckBadge({
   );
 }
 
-export function TenantRow({ name, port, watchState }: Props) {
+export function TenantRow({
+  name,
+  port,
+  watchState,
+  ip,
+  vmPid,
+  memoryMb,
+}: Props) {
   const stateColor = WATCH_STATE_COLORS[watchState.state];
   const stateSymbol = WATCH_STATE_SYMBOLS[watchState.state];
 
@@ -57,6 +67,15 @@ export function TenantRow({ name, port, watchState }: Props) {
       </Box>
       <Box width={8}>
         <Text dimColor>:{port}</Text>
+      </Box>
+      <Box width={16}>
+        <Text dimColor>{ip ?? "--"}</Text>
+      </Box>
+      <Box width={8}>
+        <Text dimColor>{vmPid ?? "--"}</Text>
+      </Box>
+      <Box width={6}>
+        <Text dimColor>{memoryMb != null ? `${memoryMb}M` : "--"}</Text>
       </Box>
       <Box width={12}>
         <Text color={stateColor}>{watchState.state}</Text>
