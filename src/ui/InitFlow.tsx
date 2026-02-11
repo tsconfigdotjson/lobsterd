@@ -8,6 +8,7 @@ import type {
 } from "../commands/init.js";
 import { runInit } from "../commands/init.js";
 import type { LobsterdConfig } from "../types/index.js";
+import { LOBSTER } from "./theme.js";
 
 type Step = "domain" | "confirm" | "running" | "done";
 
@@ -89,7 +90,7 @@ export function InitFlow({ preflight: pre, config }: Props) {
 
   return (
     <Box flexDirection="column" padding={1}>
-      <Text bold>lobsterd init</Text>
+      <Text bold>{LOBSTER} lobsterd init</Text>
 
       {step === "domain" && (
         <Box flexDirection="column" marginTop={1}>

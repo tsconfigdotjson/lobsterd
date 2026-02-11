@@ -3,7 +3,6 @@ import { Command } from "commander";
 import { render } from "ink";
 import { runEvict } from "./commands/evict.js";
 import { preflight } from "./commands/init.js";
-import { formatTable, runList } from "./commands/list.js";
 import { runLogs } from "./commands/logs.js";
 import { runMolt } from "./commands/molt.js";
 import { runSnap } from "./commands/snap.js";
@@ -11,7 +10,7 @@ import { runSpawn } from "./commands/spawn.js";
 import { runTank } from "./commands/tank.js";
 import { runWatch } from "./commands/watch.js";
 import { DEFAULT_CONFIG } from "./config/defaults.js";
-import { loadConfig } from "./config/loader.js";
+import { loadConfig, loadRegistry } from "./config/loader.js";
 import { InitFlow } from "./ui/InitFlow.js";
 import { MoltResults } from "./ui/MoltProgress.js";
 
@@ -137,27 +136,6 @@ program
     process.exit(allHealthy ? 0 : 1);
   });
 
-// ── list ──────────────────────────────────────────────────────────────────────
-
-program
-  .command("list")
-  .description("List tenants with status")
-  .option("--json", "Output as JSON")
-  .action(async (opts: { json?: boolean }) => {
-    const result = await runList(opts);
-
-    if (result.isErr()) {
-      console.error(`Error: ${result.error.message}`);
-      process.exit(1);
-    }
-
-    if (opts.json) {
-      console.log(JSON.stringify(result.value, null, 2));
-    } else {
-      console.log(formatTable(result.value));
-    }
-  });
-
 // ── snap ──────────────────────────────────────────────────────────────────────
 
 program
@@ -191,8 +169,9 @@ program
 program
   .command("tank")
   .description("TUI dashboard showing all tenant health")
-  .action(async () => {
-    const code = await runTank();
+  .option("--json", "Output as JSON")
+  .action(async (opts: { json?: boolean }) => {
+    const code = await runTank({ json: opts.json });
     process.exit(code);
   });
 
@@ -205,6 +184,25 @@ program
   .action(async (name: string, opts: { service?: string }) => {
     const code = await runLogs(name, opts);
     process.exit(code);
+  });
+
+// ── token ─────────────────────────────────────────────────────────────────────
+
+program
+  .command("token <name>")
+  .description("Print gateway token for a tenant")
+  .action(async (name: string) => {
+    const reg = await loadRegistry();
+    if (reg.isErr()) {
+      console.error(`Error: ${reg.error.message}`);
+      process.exit(1);
+    }
+    const tenant = reg.value.tenants.find((t) => t.name === name);
+    if (!tenant) {
+      console.error(`Tenant "${name}" not found`);
+      process.exit(1);
+    }
+    console.log(tenant.gatewayToken);
   });
 
 program.parse();

@@ -34,9 +34,6 @@ This creates:
 # Spawn a new tenant
 sudo lobsterd spawn <name>
 
-# List tenants
-sudo lobsterd list
-
 # Remove a tenant
 sudo lobsterd evict <name>
 
@@ -46,8 +43,14 @@ sudo lobsterd molt [name]
 # Start the watchdog daemon
 sudo lobsterd watch [-d]
 
-# TUI dashboard
+# TUI dashboard (IP, PID, memory, health)
 sudo lobsterd tank
+
+# Machine-readable tenant list
+sudo lobsterd tank --json
+
+# Print gateway token for a tenant
+sudo lobsterd token <name>
 
 # Stream tenant logs
 sudo lobsterd logs <name>
@@ -127,7 +130,7 @@ tuning).
 ```
 src/
   index.tsx           CLI entry point (commander)
-  commands/           init, spawn, evict, molt, list, snap, watch, tank, logs
+  commands/           init, spawn, evict, molt, snap, watch, tank, logs
   system/             firecracker API, networking, caddy, overlay images, agent TCP
   config/             zod schemas, defaults, JSON loader with file locking
   checks/             VM and network health checks
