@@ -11,7 +11,7 @@ import { runTank } from "./commands/tank.js";
 import { runWatch } from "./commands/watch.js";
 import { DEFAULT_CONFIG } from "./config/defaults.js";
 import { loadConfig, loadRegistry } from "./config/loader.js";
-import { PROVIDER_DEFAULTS, buildProviderConfig } from "./config/models.js";
+import { buildProviderConfig, PROVIDER_DEFAULTS } from "./config/models.js";
 import { InitFlow } from "./ui/InitFlow.js";
 import { MoltResults } from "./ui/MoltProgress.js";
 import { SpawnFlow } from "./ui/SpawnFlow.js";

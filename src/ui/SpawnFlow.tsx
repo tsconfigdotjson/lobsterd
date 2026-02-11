@@ -1,8 +1,8 @@
 import { PasswordInput, Spinner, StatusMessage, TextInput } from "@inkjs/ui";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useState } from "react";
-import { type SpawnProgress, runSpawn } from "../commands/spawn.js";
-import { PROVIDER_DEFAULTS, buildProviderConfig } from "../config/models.js";
+import { runSpawn, type SpawnProgress } from "../commands/spawn.js";
+import { buildProviderConfig, PROVIDER_DEFAULTS } from "../config/models.js";
 import type { Tenant } from "../types/index.js";
 import { LOBSTER } from "./theme.js";
 
@@ -27,7 +27,9 @@ export function SpawnFlow({ name }: Props) {
   const [baseUrl, setBaseUrl] = useState(PROVIDER_DEFAULTS.baseUrl);
   const [model, setModel] = useState(PROVIDER_DEFAULTS.model);
   const [modelName, setModelName] = useState(PROVIDER_DEFAULTS.modelName);
-  const [contextWindow, setContextWindow] = useState(PROVIDER_DEFAULTS.contextWindow);
+  const [contextWindow, setContextWindow] = useState(
+    PROVIDER_DEFAULTS.contextWindow,
+  );
   const [maxTokens, setMaxTokens] = useState(PROVIDER_DEFAULTS.maxTokens);
   const [progress, setProgress] = useState<SpawnProgress | null>(null);
   const [tenant, setTenant] = useState<Tenant | null>(null);
@@ -61,7 +63,9 @@ export function SpawnFlow({ name }: Props) {
   }
 
   function handleApiKeySubmit(apiKey: string) {
-    if (!apiKey.trim()) return;
+    if (!apiKey.trim()) {
+      return;
+    }
 
     const override = buildProviderConfig({
       baseUrl,
@@ -106,7 +110,9 @@ export function SpawnFlow({ name }: Props) {
               onSubmit={handleBaseUrlSubmit}
             />
           </Box>
-          <Text dimColor>OpenAI-compatible endpoint (press Enter for default)</Text>
+          <Text dimColor>
+            OpenAI-compatible endpoint (press Enter for default)
+          </Text>
         </Box>
       )}
 
@@ -178,9 +184,7 @@ export function SpawnFlow({ name }: Props) {
         <Box flexDirection="column" marginTop={1}>
           <Spinner
             label={
-              progress
-                ? `[${progress.step}] ${progress.detail}`
-                : "Starting..."
+              progress ? `[${progress.step}] ${progress.detail}` : "Starting..."
             }
           />
         </Box>

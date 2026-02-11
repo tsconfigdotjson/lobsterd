@@ -15,9 +15,10 @@ export interface ProviderInput {
   apiKey: string;
 }
 
-export function buildProviderConfig(
-  input: ProviderInput,
-): { models: Record<string, unknown>; agents: Record<string, unknown> } {
+export function buildProviderConfig(input: ProviderInput): {
+  models: Record<string, unknown>;
+  agents: Record<string, unknown>;
+} {
   // Derive a provider key from the base URL hostname
   const providerKey = new URL(input.baseUrl).hostname.split(".")[0] ?? "custom";
 
