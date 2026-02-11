@@ -79,21 +79,35 @@ export function ensureCaddyRunning(): ResultAsync<void, LobsterError> {
   return exec(['systemctl', 'enable', '--now', 'caddy']).map(() => undefined);
 }
 
-export function writeCaddyBaseConfig(adminApi: string, domain: string): ResultAsync<void, LobsterError> {
-  const config = {
-    apps: {
-      http: {
-        servers: {
-          lobster: {
-            listen: [':443', ':80'],
-            routes: [],
-            automatic_https: {
-              disable_redirects: false,
-            },
-          },
-        },
-      },
-    },
+export function writeCaddyBaseConfig(
+  adminApi: string,
+  domain: string,
+  tls?: import('../types/index.js').CaddyTlsConfig,
+): ResultAsync<void, LobsterError> {
+  const server: Record<string, unknown> = {
+    listen: [':443', ':80'],
+    routes: [],
   };
-  return caddyApi(adminApi, 'POST', '/load', config).map(() => undefined);
+
+  const apps: Record<string, unknown> = {
+    http: { servers: { lobster: server } },
+  };
+
+  if (tls) {
+    server.tls_connection_policies = [{}];
+    apps.tls = {
+      certificates: {
+        load_files: [{ certificate: tls.certPath, key: tls.keyPath }],
+      },
+      automation: {
+        policies: [
+          { subjects: [`*.${domain}`, domain], issuers: [] },
+        ],
+      },
+    };
+  } else {
+    server.automatic_https = { disable_redirects: false };
+  }
+
+  return caddyApi(adminApi, 'POST', '/load', { apps }).map(() => undefined);
 }

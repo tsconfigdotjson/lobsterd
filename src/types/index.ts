@@ -63,9 +63,15 @@ export interface NetworkConfig {
   gatewayPortStart: number;
 }
 
+export interface CaddyTlsConfig {
+  certPath: string;
+  keyPath: string;
+}
+
 export interface CaddyConfig {
   adminApi: string;
   domain: string;
+  tls?: CaddyTlsConfig;
 }
 
 export interface VsockConfig {

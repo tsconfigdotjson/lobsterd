@@ -17,9 +17,15 @@ export const networkConfigSchema = z.object({
   gatewayPortStart: z.number().int().min(1024).max(65535),
 });
 
+export const caddyTlsConfigSchema = z.object({
+  certPath: z.string().min(1),
+  keyPath: z.string().min(1),
+});
+
 export const caddyConfigSchema = z.object({
   adminApi: z.string().url(),
   domain: z.string().min(1),
+  tls: caddyTlsConfigSchema.optional(),
 });
 
 export const vsockConfigSchema = z.object({

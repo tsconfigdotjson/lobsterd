@@ -3,6 +3,7 @@ import { Command } from 'commander';
 import React from 'react';
 import { render } from 'ink';
 import { runInit } from './commands/init.js';
+import { loadConfig } from './config/loader.js';
 import { runSpawn } from './commands/spawn.js';
 import { runEvict } from './commands/evict.js';
 import { runMolt } from './commands/molt.js';
@@ -27,7 +28,9 @@ program
   .description('Initialize host (check KVM, Firecracker, kernel, rootfs; configure Caddy)')
   .action(async () => {
     console.log('Initializing lobsterd host...');
-    const result = await runInit();
+    const configResult = await loadConfig();
+    const config = configResult.isOk() ? configResult.value : undefined;
+    const result = await runInit(config);
 
     if (result.isErr()) {
       console.error(`\n✗ ${result.error.message}`);

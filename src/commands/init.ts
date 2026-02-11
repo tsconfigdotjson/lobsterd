@@ -175,7 +175,7 @@ export function runInit(config: LobsterdConfig = DEFAULT_CONFIG): ResultAsync<In
       result.ipForwardingEnabled = true;
       return caddy.ensureCaddyRunning();
     })
-    .andThen(() => caddy.writeCaddyBaseConfig(config.caddy.adminApi, config.caddy.domain))
+    .andThen(() => caddy.writeCaddyBaseConfig(config.caddy.adminApi, config.caddy.domain, config.caddy.tls))
     .map(() => {
       result.caddyConfigured = true;
       return result;
