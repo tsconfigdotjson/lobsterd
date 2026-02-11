@@ -1,43 +1,45 @@
-import { PasswordInput, Select, Spinner, StatusMessage } from "@inkjs/ui";
+import { PasswordInput, Spinner, StatusMessage, TextInput } from "@inkjs/ui";
 import { Box, Text, useApp } from "ink";
 import { useEffect, useState } from "react";
 import { type SpawnProgress, runSpawn } from "../commands/spawn.js";
-import { MODEL_CATALOG, buildProviderConfig } from "../config/models.js";
+import { PROVIDER_DEFAULTS, buildProviderConfig } from "../config/models.js";
 import type { Tenant } from "../types/index.js";
 import { LOBSTER } from "./theme.js";
 
-type Step = "select-model" | "enter-api-key" | "spawning" | "done";
+type Step = "enter-base-url" | "enter-model" | "enter-api-key" | "spawning" | "done";
 
 interface Props {
   name: string;
 }
 
-const selectOptions = MODEL_CATALOG.map((entry) => ({
-  label: entry.label,
-  value: entry.id,
-}));
-
 export function SpawnFlow({ name }: Props) {
   const { exit } = useApp();
 
-  const [step, setStep] = useState<Step>("select-model");
-  const [selectedModelId, setSelectedModelId] = useState<string | null>(null);
+  const [step, setStep] = useState<Step>("enter-base-url");
+  const [baseUrl, setBaseUrl] = useState<string>(PROVIDER_DEFAULTS.baseUrl);
+  const [model, setModel] = useState<string>(PROVIDER_DEFAULTS.model);
   const [progress, setProgress] = useState<SpawnProgress | null>(null);
   const [tenant, setTenant] = useState<Tenant | null>(null);
   const [error, setError] = useState<string | null>(null);
 
-  function handleModelSelect(value: string) {
-    setSelectedModelId(value);
+  function handleBaseUrlSubmit(value: string) {
+    setBaseUrl(value || PROVIDER_DEFAULTS.baseUrl);
+    setStep("enter-model");
+  }
+
+  function handleModelSubmit(value: string) {
+    setModel(value || PROVIDER_DEFAULTS.model);
     setStep("enter-api-key");
   }
 
   function handleApiKeySubmit(apiKey: string) {
     if (!apiKey.trim()) return;
 
-    const entry = MODEL_CATALOG.find((e) => e.id === selectedModelId);
-    if (!entry) return;
-
-    const override = buildProviderConfig(entry, apiKey.trim());
+    const override = buildProviderConfig({
+      baseUrl,
+      model,
+      apiKey: apiKey.trim(),
+    });
     setStep("spawning");
 
     runSpawn(name, (p) => setProgress(p), { openclawOverride: override }).then(
@@ -64,10 +66,29 @@ export function SpawnFlow({ name }: Props) {
         {LOBSTER} lobsterd spawn {name}
       </Text>
 
-      {step === "select-model" && (
+      {step === "enter-base-url" && (
         <Box flexDirection="column" marginTop={1}>
-          <Text>Select a model provider:</Text>
-          <Select options={selectOptions} onChange={handleModelSelect} />
+          <Box gap={1}>
+            <Text>Base URL:</Text>
+            <TextInput
+              defaultValue={PROVIDER_DEFAULTS.baseUrl}
+              onSubmit={handleBaseUrlSubmit}
+            />
+          </Box>
+          <Text dimColor>OpenAI-compatible endpoint (press Enter for default)</Text>
+        </Box>
+      )}
+
+      {step === "enter-model" && (
+        <Box flexDirection="column" marginTop={1}>
+          <Box gap={1}>
+            <Text>Model ID:</Text>
+            <TextInput
+              defaultValue={PROVIDER_DEFAULTS.model}
+              onSubmit={handleModelSubmit}
+            />
+          </Box>
+          <Text dimColor>Model identifier at the provider (press Enter for default)</Text>
         </Box>
       )}
 

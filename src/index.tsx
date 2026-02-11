@@ -11,7 +11,7 @@ import { runTank } from "./commands/tank.js";
 import { runWatch } from "./commands/watch.js";
 import { DEFAULT_CONFIG } from "./config/defaults.js";
 import { loadConfig, loadRegistry } from "./config/loader.js";
-import { MODEL_CATALOG, buildProviderConfig } from "./config/models.js";
+import { PROVIDER_DEFAULTS, buildProviderConfig } from "./config/models.js";
 import { InitFlow } from "./ui/InitFlow.js";
 import { MoltResults } from "./ui/MoltProgress.js";
 import { SpawnFlow } from "./ui/SpawnFlow.js";
@@ -56,32 +56,21 @@ program
 program
   .command("spawn <name>")
   .description("Add a new tenant (Firecracker microVM)")
-  .option("-p, --provider <name>", "Model provider ID from catalog")
   .option("-k, --api-key <key>", "API key for the model provider")
+  .option("--base-url <url>", "OpenAI-compatible base URL")
+  .option("--model <id>", "Model identifier at the provider")
   .action(
-    async (name: string, opts: { provider?: string; apiKey?: string }) => {
-      const hasProvider = opts.provider !== undefined;
-      const hasApiKey = opts.apiKey !== undefined;
-
-      if (hasProvider !== hasApiKey) {
-        console.error(
-          "Error: Both --provider and --api-key must be provided together",
-        );
-        process.exit(1);
-      }
-
-      // Non-interactive mode: both flags provided
-      if (hasProvider && hasApiKey) {
-        const entry = MODEL_CATALOG.find((e) => e.id === opts.provider);
-        if (!entry) {
-          const valid = MODEL_CATALOG.map((e) => e.id).join(", ");
-          console.error(
-            `Error: Unknown provider "${opts.provider}". Valid providers: ${valid}`,
-          );
-          process.exit(1);
-        }
-
-        const override = buildProviderConfig(entry, opts.apiKey!);
+    async (
+      name: string,
+      opts: { apiKey?: string; baseUrl?: string; model?: string },
+    ) => {
+      // Non-interactive mode: --api-key provided
+      if (opts.apiKey) {
+        const override = buildProviderConfig({
+          baseUrl: opts.baseUrl ?? PROVIDER_DEFAULTS.baseUrl,
+          model: opts.model ?? PROVIDER_DEFAULTS.model,
+          apiKey: opts.apiKey,
+        });
         console.log(`Spawning tenant "${name}"...`);
         const result = await runSpawn(
           name,
@@ -104,7 +93,7 @@ program
         return;
       }
 
-      // Interactive mode: no flags
+      // Interactive mode: no --api-key
       const { waitUntilExit } = render(<SpawnFlow name={name} />);
       await waitUntilExit();
     },
