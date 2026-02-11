@@ -19,6 +19,10 @@ export interface SpawnProgress {
   detail: string;
 }
 
+export interface SpawnOptions {
+  openclawOverride?: Record<string, unknown>;
+}
+
 type UndoFn = () => ResultAsync<void, LobsterError>;
 
 function computeSubnetIps(
@@ -40,6 +44,7 @@ function computeSubnetIps(
 export function runSpawn(
   name: string,
   onProgress?: (p: SpawnProgress) => void,
+  options?: SpawnOptions,
 ): ResultAsync<Tenant, LobsterError> {
   const progress = (step: string, detail: string) =>
     onProgress?.({ step, detail });
@@ -305,6 +310,9 @@ export function runSpawn(
       progress("secrets", "Injecting API keys and gateway token");
       const tenantOrigin = `https://${name}.${config.caddy.domain}`;
       const tenantConfig = structuredClone(config.openclaw.defaultConfig);
+      if (options?.openclawOverride) {
+        Object.assign(tenantConfig, options.openclawOverride);
+      }
       const origins = tenantConfig.gateway?.controlUi?.allowedOrigins ?? [];
       if (!origins.includes(tenantOrigin)) {
         origins.push(tenantOrigin);
