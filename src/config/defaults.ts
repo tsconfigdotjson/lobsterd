@@ -81,30 +81,6 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
           dangerouslyDisableDeviceAuth: true,
         },
       },
-      models: {
-        providers: {
-          fireworks: {
-            baseUrl: "https://api.fireworks.ai/inference/v1",
-            apiKey: "fw_SM5UK6FtmAhA15UYscdTXk",
-            api: "openai-completions",
-            models: [
-              {
-                id: "accounts/fireworks/models/kimi-k2p5",
-                name: "Kimi K2.5",
-                contextWindow: 131072,
-                maxTokens: 32768,
-              },
-            ],
-          },
-        },
-      },
-      agents: {
-        defaults: {
-          model: {
-            primary: "fireworks/accounts/fireworks/models/kimi-k2p5",
-          },
-        },
-      },
     },
   },
 };

@@ -11,8 +11,10 @@ import { runTank } from "./commands/tank.js";
 import { runWatch } from "./commands/watch.js";
 import { DEFAULT_CONFIG } from "./config/defaults.js";
 import { loadConfig, loadRegistry } from "./config/loader.js";
+import { MODEL_CATALOG, buildProviderConfig } from "./config/models.js";
 import { InitFlow } from "./ui/InitFlow.js";
 import { MoltResults } from "./ui/MoltProgress.js";
+import { SpawnFlow } from "./ui/SpawnFlow.js";
 
 const program = new Command();
 
@@ -54,23 +56,59 @@ program
 program
   .command("spawn <name>")
   .description("Add a new tenant (Firecracker microVM)")
-  .action(async (name: string) => {
-    console.log(`Spawning tenant "${name}"...`);
-    const result = await runSpawn(name, (p) => {
-      console.log(`  [${p.step}] ${p.detail}`);
-    });
+  .option("-p, --provider <name>", "Model provider ID from catalog")
+  .option("-k, --api-key <key>", "API key for the model provider")
+  .action(
+    async (name: string, opts: { provider?: string; apiKey?: string }) => {
+      const hasProvider = opts.provider !== undefined;
+      const hasApiKey = opts.apiKey !== undefined;
 
-    if (result.isErr()) {
-      console.error(`\n✗ ${result.error.message}`);
-      process.exit(1);
-    }
+      if (hasProvider !== hasApiKey) {
+        console.error(
+          "Error: Both --provider and --api-key must be provided together",
+        );
+        process.exit(1);
+      }
 
-    const t = result.value;
-    console.log(`\nTenant "${t.name}" spawned successfully.`);
-    console.log(
-      `  CID: ${t.cid}  IP: ${t.ipAddress}  Port: ${t.gatewayPort}  PID: ${t.vmPid}`,
-    );
-  });
+      // Non-interactive mode: both flags provided
+      if (hasProvider && hasApiKey) {
+        const entry = MODEL_CATALOG.find((e) => e.id === opts.provider);
+        if (!entry) {
+          const valid = MODEL_CATALOG.map((e) => e.id).join(", ");
+          console.error(
+            `Error: Unknown provider "${opts.provider}". Valid providers: ${valid}`,
+          );
+          process.exit(1);
+        }
+
+        const override = buildProviderConfig(entry, opts.apiKey!);
+        console.log(`Spawning tenant "${name}"...`);
+        const result = await runSpawn(
+          name,
+          (p) => {
+            console.log(`  [${p.step}] ${p.detail}`);
+          },
+          { openclawOverride: override },
+        );
+
+        if (result.isErr()) {
+          console.error(`\n✗ ${result.error.message}`);
+          process.exit(1);
+        }
+
+        const t = result.value;
+        console.log(`\nTenant "${t.name}" spawned successfully.`);
+        console.log(
+          `  CID: ${t.cid}  IP: ${t.ipAddress}  Port: ${t.gatewayPort}  PID: ${t.vmPid}`,
+        );
+        return;
+      }
+
+      // Interactive mode: no flags
+      const { waitUntilExit } = render(<SpawnFlow name={name} />);
+      await waitUntilExit();
+    },
+  );
 
 // ── evict ─────────────────────────────────────────────────────────────────────
 
