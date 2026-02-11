@@ -46,13 +46,16 @@ echo "==> Installing packages inside chroot"
 chroot "$MOUNT_DIR" /bin/sh -c '
   set -e
   apk update
-  apk add alpine-base openrc git curl libstdc++ libgcc
+  apk add alpine-base openrc git curl unzip libstdc++ libgcc
 '
 
-echo "==> Installing Node.js 22 (musl build)"
-NODE_VERSION="22.14.0"
-curl -fSL "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64-musl.tar.xz" \
-  | tar xJ --strip-components=1 -C "$MOUNT_DIR/usr/local"
+echo "==> Installing Bun (musl build)"
+BUN_VERSION="1.3.9"
+curl -fSL "https://github.com/oven-sh/bun/releases/download/bun-v${BUN_VERSION}/bun-linux-x64-musl.zip" \
+  -o /tmp/bun.zip
+unzip -o /tmp/bun.zip -d /tmp/bun-extract
+install -m 0755 /tmp/bun-extract/bun-linux-x64-musl/bun "$MOUNT_DIR/usr/local/bin/bun"
+rm -rf /tmp/bun.zip /tmp/bun-extract
 
 echo "==> Setting up init system"
 # Enable necessary services
@@ -81,7 +84,7 @@ install -m 0644 lobster-agent.mjs "$MOUNT_DIR/opt/lobster-agent/agent.mjs"
 cat > "$MOUNT_DIR/etc/init.d/lobster-agent" <<'SVC'
 #!/sbin/openrc-run
 name="lobster-agent"
-command="/usr/local/bin/node"
+command="/usr/local/bin/bun"
 command_args="/opt/lobster-agent/agent.mjs"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
@@ -95,8 +98,8 @@ ln -sf /etc/init.d/lobster-agent "$MOUNT_DIR/etc/runlevels/default/lobster-agent
 echo "==> Installing OpenClaw (pre-built from npm)"
 OPENCLAW_TMP="$(mktemp -d)"
 cd "$OPENCLAW_TMP"
-npm init -y > /dev/null 2>&1
-npm install openclaw
+bun init -y > /dev/null 2>&1
+bun add openclaw
 cd -
 mkdir -p "$MOUNT_DIR/opt/openclaw"
 cp -a "$OPENCLAW_TMP/node_modules/openclaw"/* "$MOUNT_DIR/opt/openclaw/"
@@ -110,7 +113,7 @@ echo "==> Cleanup"
 umount "$MOUNT_DIR/proc" "$MOUNT_DIR/sys" "$MOUNT_DIR/dev"
 echo "nameserver 8.8.8.8" > "$MOUNT_DIR/etc/resolv.conf"
 rm -rf "$MOUNT_DIR/var/cache/apk"/*
-rm -rf "$MOUNT_DIR/root/.npm" "$MOUNT_DIR/tmp"/*
+rm -rf "$MOUNT_DIR/root/.bun" "$MOUNT_DIR/tmp"/*
 
 umount "$MOUNT_DIR"
 rmdir "$MOUNT_DIR"

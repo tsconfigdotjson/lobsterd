@@ -24,17 +24,17 @@ export function checkGatewayPort(tenant: Tenant): ResultAsync<HealthCheckResult,
     (async (): Promise<HealthCheckResult> => {
       try {
         const socket = await Bun.connect({
-          hostname: 'localhost',
-          port: tenant.gatewayPort,
+          hostname: tenant.ipAddress,
+          port: 9000,
           socket: {
             data() {},
             open(socket) { socket.end(); },
             error() {},
           },
         });
-        return { check: 'net.gateway', status: 'ok', message: `Port ${tenant.gatewayPort} is reachable` };
+        return { check: 'net.gateway', status: 'ok', message: `Gateway on ${tenant.ipAddress}:9000 is reachable` };
       } catch {
-        return { check: 'net.gateway', status: 'failed', message: `Port ${tenant.gatewayPort} is not reachable` };
+        return { check: 'net.gateway', status: 'failed', message: `Gateway on ${tenant.ipAddress}:9000 is not reachable` };
       }
     })(),
   );

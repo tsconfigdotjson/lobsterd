@@ -1,10 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { render, useApp, useInput } from 'ink';
 import type { Tenant } from '../types/index.js';
-import { loadRegistry } from '../config/loader.js';
+import { loadRegistry, loadConfig } from '../config/loader.js';
 import { LogStream } from '../ui/LogStream.js';
+import * as vsock from '../system/vsock.js';
 
-function LogsApp({ tenant }: { tenant: Tenant }) {
+function fetchLogs(guestIp: string, port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const { Socket } = require('net');
+    const socket = new Socket();
+    let response = '';
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('timeout'));
+    }, 5000);
+
+    socket.connect(port, guestIp, () => {
+      socket.write(JSON.stringify({ type: 'get-logs' }) + '\n');
+    });
+    socket.on('data', (chunk: Buffer) => { response += chunk.toString(); });
+    socket.on('end', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve(response.trim());
+    });
+    socket.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function LogsApp({ tenant, agentPort }: { tenant: Tenant; agentPort: number }) {
   const [lines, setLines] = useState<string[]>([]);
   const { exit } = useApp();
 
@@ -16,34 +43,17 @@ function LogsApp({ tenant }: { tenant: Tenant }) {
     let cancelled = false;
 
     async function pollLogs() {
-      // Poll guest agent for logs via vsock
       while (!cancelled) {
         try {
-          // For now, read from Caddy access log via host
-          const proc = Bun.spawn(['tail', '-f', `/var/log/caddy/access-${tenant.name}.log`], {
-            stdout: 'pipe',
-            stderr: 'pipe',
-          });
-
-          const reader = (proc.stdout as ReadableStream).getReader();
-          try {
-            while (!cancelled) {
-              const { done, value } = await reader.read();
-              if (done) break;
-              const text = new TextDecoder().decode(value);
-              const parts = text.split('\n').filter(Boolean);
-              if (parts.length > 0) {
-                setLines((prev) => [...prev, ...parts]);
-              }
-            }
-          } catch {
-            // Stream ended
+          const logs = await fetchLogs(tenant.ipAddress, agentPort);
+          if (logs) {
+            const parts = logs.split('\n').filter(Boolean);
+            setLines(parts);
           }
-          proc.kill();
         } catch {
-          // Retry after a delay
-          await Bun.sleep(2000);
+          // Agent not reachable, retry
         }
+        await Bun.sleep(3000);
       }
     }
 
@@ -63,6 +73,13 @@ export async function runLogs(
   name: string,
   opts: { service?: string } = {},
 ): Promise<number> {
+  const configResult = await loadConfig();
+  if (configResult.isErr()) {
+    console.error(`Error: ${configResult.error.message}`);
+    return 1;
+  }
+  const config = configResult.value;
+
   const registryResult = await loadRegistry();
   if (registryResult.isErr()) {
     console.error(`Error: ${registryResult.error.message}`);
@@ -76,29 +93,19 @@ export async function runLogs(
   }
 
   if (!process.stdin.isTTY) {
-    // Non-TTY: tail Caddy access log
-    const logPath = `/var/log/caddy/access-${tenant.name}.log`;
-    const proc = Bun.spawn(['tail', '-f', logPath], {
-      stdout: 'pipe',
-      stderr: 'pipe',
-    });
-    const reader = (proc.stdout as ReadableStream).getReader();
-    const decoder = new TextDecoder();
+    // Non-TTY: single fetch and print
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        process.stdout.write(decoder.decode(value));
-      }
-    } catch {
-      // Stream ended
+      const logs = await fetchLogs(tenant.ipAddress, config.vsock.agentPort);
+      if (logs) process.stdout.write(logs + '\n');
+    } catch (e) {
+      console.error(`Failed to fetch logs: ${e instanceof Error ? e.message : e}`);
+      return 1;
     }
-    proc.kill();
     return 0;
   }
 
   const { waitUntilExit } = render(
-    <LogsApp tenant={tenant} />,
+    <LogsApp tenant={tenant} agentPort={config.vsock.agentPort} />,
   );
 
   await waitUntilExit();

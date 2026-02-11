@@ -1,4 +1,4 @@
-#!/usr/bin/env node
+#!/usr/bin/env bun
 
 // lobster-agent.mjs — In-VM agent for lobsterd Firecracker microVMs
 // Listens on TCP for host commands: inject-secrets, health-ping, launch-openclaw, shutdown
@@ -113,7 +113,7 @@ function handleLaunchOpenclaw() {
   }
 
   const logFd = openSync('/tmp/openclaw-gateway.log', 'a');
-  gatewayProcess = spawn('node', [
+  gatewayProcess = spawn('bun', [
     '/opt/openclaw/openclaw.mjs',
     'gateway',
   ], {
