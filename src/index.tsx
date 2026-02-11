@@ -18,7 +18,7 @@ const program = new Command();
 
 program
   .name("lobsterd")
-  .description("lobsterd — Firecracker MicroVM Tenant Orchestrator")
+  .description("🦞 lobsterd — Firecracker MicroVM Tenant Orchestrator")
   .version("0.2.0");
 
 // ── init ──────────────────────────────────────────────────────────────────────
