@@ -62,12 +62,12 @@ sudo mv rootfs.ext4 /var/lib/lobsterd/rootfs.ext4
 ## Setup
 
 ```bash
-# Install project dependencies
+# Install dependencies and link the lobsterd CLI
 bun install
 
 # Initialize the host (checks KVM, Firecracker, kernel, rootfs; sets up
 # directories, config, IP forwarding, and Caddy)
-sudo bun src/index.tsx init
+sudo lobsterd init
 ```
 
 This creates:
@@ -80,28 +80,28 @@ This creates:
 
 ```bash
 # Spawn a new tenant
-sudo bun src/index.tsx spawn <name>
+sudo lobsterd spawn <name>
 
 # List tenants
-sudo bun src/index.tsx list
+sudo lobsterd list
 
 # Remove a tenant
-sudo bun src/index.tsx evict <name>
+sudo lobsterd evict <name>
 
 # Health-check and repair tenants
-sudo bun src/index.tsx molt [name]
+sudo lobsterd molt [name]
 
 # Start the watchdog daemon
-sudo bun src/index.tsx watch [-d]
+sudo lobsterd watch [-d]
 
 # TUI dashboard
-sudo bun src/index.tsx tank
+sudo lobsterd tank
 
 # Stream tenant logs
-sudo bun src/index.tsx logs <name>
+sudo lobsterd logs <name>
 
 # Snapshot a tenant's overlay
-sudo bun src/index.tsx snap <name>
+sudo lobsterd snap <name>
 ```
 
 ## Architecture
