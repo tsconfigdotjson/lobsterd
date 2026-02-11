@@ -14,11 +14,7 @@ function buildTenantConfig(
   config: LobsterdConfig,
 ): Record<string, unknown> {
   const tenantOrigin = `https://${tenant.name}.${config.caddy.domain}`;
-  const tenantConfig = structuredClone(config.openclaw.defaultConfig) as Record<
-    string,
-    // biome-ignore lint/suspicious/noExplicitAny: untyped JSON config blob from user
-    any
-  >;
+  const tenantConfig = structuredClone(config.openclaw.defaultConfig);
   const origins = tenantConfig.gateway?.controlUi?.allowedOrigins ?? [];
   if (!origins.includes(tenantOrigin)) {
     origins.push(tenantOrigin);

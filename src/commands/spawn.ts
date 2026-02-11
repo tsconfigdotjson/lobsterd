@@ -305,13 +305,7 @@ export function runSpawn(
       // Step 9: Inject secrets (build per-tenant config with correct origin)
       progress("secrets", "Injecting API keys and gateway token");
       const tenantOrigin = `https://${name}.${config.caddy.domain}`;
-      const tenantConfig = structuredClone(
-        config.openclaw.defaultConfig,
-      ) as Record<
-        string,
-        // biome-ignore lint/suspicious/noExplicitAny: untyped JSON config blob from user
-        any
-      >;
+      const tenantConfig = structuredClone(config.openclaw.defaultConfig);
       const origins = tenantConfig.gateway?.controlUi?.allowedOrigins ?? [];
       if (!origins.includes(tenantOrigin)) {
         origins.push(tenantOrigin);

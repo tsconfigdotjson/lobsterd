@@ -123,9 +123,20 @@ export interface WatchdogConfig {
   repairCooldownMs: number;
 }
 
+export interface OpenclawDefaultConfig {
+  gateway?: {
+    controlUi?: {
+      allowedOrigins?: string[];
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  };
+  [key: string]: unknown;
+}
+
 export interface OpenclawConfig {
   installPath: string;
-  defaultConfig: Record<string, unknown>;
+  defaultConfig: OpenclawDefaultConfig;
 }
 
 export interface LobsterdConfig {
