@@ -1,6 +1,4 @@
-<p align="center">
-  <img src="header.jpg" alt="lobsterd" />
-</p>
+![lobsterd](header.jpg)
 
 # lobsterd
 
