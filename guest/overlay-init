@@ -1,0 +1,61 @@
+#!/bin/sh
+set -e
+
+# overlay-init — PID 1 handoff script for Firecracker microVMs
+# Mounts overlay drive, creates overlayfs, pivot_root, exec init
+
+OVERLAY_DEV="/dev/vdb"
+OVERLAY_MOUNT="/mnt/overlay"
+MERGED="/mnt/merged"
+
+# Mount essential filesystems early so we have /dev and can create mount points
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+mount -t proc proc /proc 2>/dev/null || true
+mount -t tmpfs tmpfs /mnt
+
+# Mount the overlay drive (ext4 sparse file from host)
+mkdir -p "$OVERLAY_MOUNT"
+mount -t ext4 "$OVERLAY_DEV" "$OVERLAY_MOUNT"
+
+# Create overlayfs directories
+mkdir -p "$OVERLAY_MOUNT/upper" "$OVERLAY_MOUNT/work"
+mkdir -p "$MERGED"
+
+# Mount overlayfs: lower=rootfs (current /), upper+work=overlay drive
+mount -t overlay overlay \
+  -o "lowerdir=/,upperdir=$OVERLAY_MOUNT/upper,workdir=$OVERLAY_MOUNT/work" \
+  "$MERGED"
+
+# Prepare for pivot_root
+mkdir -p "$MERGED/mnt/old-root"
+
+# Write /etc/network/interfaces so OpenRC networking service succeeds.
+# The kernel ip= parameter already configured the interface; this just
+# prevents ifupdown-ng from erroring out.
+mkdir -p "$MERGED/etc/network"
+cat > "$MERGED/etc/network/interfaces" <<'EOF'
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet manual
+EOF
+
+# pivot_root into merged filesystem
+cd "$MERGED"
+pivot_root . mnt/old-root
+
+# Remount essential filesystems
+mount -t proc proc /proc 2>/dev/null || true
+mount -t sysfs sysfs /sys
+mount -t devtmpfs devtmpfs /dev 2>/dev/null || true
+
+# Network is already configured by kernel ip= parameter; no need for
+# overlay-init to re-configure it since the interface persists across
+# pivot_root.
+
+# Unmount old root (lazy)
+umount -l /mnt/old-root 2>/dev/null || true
+
+# Hand off to real init
+exec /sbin/init

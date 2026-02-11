@@ -1,55 +1,81 @@
-import { ResultAsync, ok, okAsync } from 'neverthrow';
+import { ResultAsync } from 'neverthrow';
 import type { LobsterError, Tenant } from '../types/index.js';
-import { loadRegistry } from '../config/loader.js';
-import * as systemd from '../system/systemd.js';
-import * as docker from '../system/docker.js';
+import { loadConfig, loadRegistry } from '../config/loader.js';
+import * as vsock from '../system/vsock.js';
 
 export interface TenantListEntry {
   name: string;
-  uid: number;
+  cid: number;
+  ip: string;
   port: number;
+  vmPid: string;
   status: string;
-  docker: string;
-  gateway: string;
+  memoryMb?: number;
 }
 
-function quickCheck(tenant: Tenant): ResultAsync<TenantListEntry, LobsterError> {
-  const entry: TenantListEntry = {
-    name: tenant.name,
-    uid: tenant.uid,
-    port: tenant.gatewayPort,
-    status: tenant.status,
-    docker: '?',
-    gateway: '?',
-  };
+function quickCheck(tenant: Tenant): TenantListEntry {
+  let pidStatus = 'dead';
+  if (tenant.vmPid) {
+    try {
+      process.kill(tenant.vmPid, 0);
+      pidStatus = String(tenant.vmPid);
+    } catch {
+      pidStatus = 'dead';
+    }
+  }
 
-  return docker.isResponsive(tenant.name, tenant.uid)
-    .map((isUp) => { entry.docker = isUp ? 'up' : 'down'; })
-    .orElse(() => { entry.docker = 'err'; return okAsync(undefined); })
-    .andThen(() => systemd.isActive('openclaw-gateway', tenant.name, tenant.uid))
-    .map((active) => { entry.gateway = active ? 'up' : 'down'; })
-    .orElse(() => { entry.gateway = 'err'; return okAsync(undefined); })
-    .map(() => entry);
+  return {
+    name: tenant.name,
+    cid: tenant.cid,
+    ip: tenant.ipAddress,
+    port: tenant.gatewayPort,
+    vmPid: pidStatus,
+    status: tenant.status,
+  };
 }
 
 export function runList(
   opts: { json?: boolean } = {},
 ): ResultAsync<TenantListEntry[], LobsterError> {
-  return loadRegistry().andThen((registry): ResultAsync<TenantListEntry[], LobsterError> => {
-    if (registry.tenants.length === 0) {
-      return okAsync([]);
-    }
-    return ResultAsync.combine(
-      registry.tenants.map((t) => quickCheck(t)),
-    );
-  });
+  return loadConfig().andThen((config) =>
+    loadRegistry().andThen((registry) => {
+      const entries = registry.tenants.map((t) => quickCheck(t));
+
+      const statsPromises = entries.map((entry, i) => {
+        if (entry.vmPid === 'dead') return Promise.resolve();
+        const tenant = registry.tenants[i];
+        return vsock
+          .getStats(tenant.ipAddress, config.vsock.agentPort)
+          .map((stats) => {
+            entry.memoryMb = stats.memoryKb > 0 ? Math.round(stats.memoryKb / 1024) : undefined;
+          })
+          .unwrapOr(undefined);
+      });
+
+      return ResultAsync.fromPromise(
+        Promise.all(statsPromises).then(() => entries),
+        () => ({
+          code: 'VSOCK_CONNECT_FAILED' as const,
+          message: 'Failed to collect stats',
+        }),
+      );
+    }),
+  );
 }
 
 export function formatTable(entries: TenantListEntry[]): string {
   if (entries.length === 0) return 'No tenants registered.';
 
-  const header = ['NAME', 'UID', 'PORT', 'STATUS', 'DOCKER', 'GATEWAY'];
-  const rows = entries.map((e) => [e.name, String(e.uid), String(e.port), e.status, e.docker, e.gateway]);
+  const header = ['NAME', 'CID', 'IP', 'PORT', 'PID', 'STATUS', 'MEM'];
+  const rows = entries.map((e) => [
+    e.name,
+    String(e.cid),
+    e.ip,
+    String(e.port),
+    e.vmPid,
+    e.status,
+    e.memoryMb != null ? `${e.memoryMb}M` : '--',
+  ]);
 
   const widths = header.map((h, i) =>
     Math.max(h.length, ...rows.map((r) => r[i].length)),

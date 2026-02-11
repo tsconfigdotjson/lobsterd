@@ -1,11 +1,37 @@
 import React, { useState, useEffect } from 'react';
 import { render, useApp, useInput } from 'ink';
 import type { Tenant } from '../types/index.js';
-import { loadRegistry } from '../config/loader.js';
-import * as systemd from '../system/systemd.js';
+import { loadRegistry, loadConfig } from '../config/loader.js';
 import { LogStream } from '../ui/LogStream.js';
+import * as vsock from '../system/vsock.js';
 
-function LogsApp({ tenant, service }: { tenant: Tenant; service: string }) {
+function fetchLogs(guestIp: string, port: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const { Socket } = require('net');
+    const socket = new Socket();
+    let response = '';
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error('timeout'));
+    }, 5000);
+
+    socket.connect(port, guestIp, () => {
+      socket.write(JSON.stringify({ type: 'get-logs' }) + '\n');
+    });
+    socket.on('data', (chunk: Buffer) => { response += chunk.toString(); });
+    socket.on('end', () => {
+      clearTimeout(timer);
+      socket.end();
+      resolve(response.trim());
+    });
+    socket.on('error', (err: Error) => {
+      clearTimeout(timer);
+      reject(err);
+    });
+  });
+}
+
+function LogsApp({ tenant, agentPort }: { tenant: Tenant; agentPort: number }) {
   const [lines, setLines] = useState<string[]>([]);
   const { exit } = useApp();
 
@@ -14,34 +40,30 @@ function LogsApp({ tenant, service }: { tenant: Tenant; service: string }) {
   });
 
   useEffect(() => {
-    const proc = systemd.streamLogs(service, tenant.name, tenant.uid);
-    let buffer = '';
+    let cancelled = false;
 
-    async function readStream() {
-      const reader = (proc.stdout as ReadableStream).getReader();
-      try {
-        while (true) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += new TextDecoder().decode(value);
-          const parts = buffer.split('\n');
-          buffer = parts.pop() ?? '';
-          if (parts.length > 0) {
-            setLines((prev) => [...prev, ...parts]);
+    async function pollLogs() {
+      while (!cancelled) {
+        try {
+          const logs = await fetchLogs(tenant.ipAddress, agentPort);
+          if (logs) {
+            const parts = logs.split('\n').filter(Boolean);
+            setLines(parts);
           }
+        } catch {
+          // Agent not reachable, retry
         }
-      } catch {
-        // Stream ended
+        await Bun.sleep(3000);
       }
     }
 
-    readStream();
-    return () => { proc.kill(); };
+    pollLogs();
+    return () => { cancelled = true; };
   }, []);
 
   return (
     <LogStream
-      title={`${tenant.name} — ${service}`}
+      title={`${tenant.name} — logs`}
       lines={lines}
     />
   );
@@ -51,7 +73,12 @@ export async function runLogs(
   name: string,
   opts: { service?: string } = {},
 ): Promise<number> {
-  const service = opts.service ?? 'openclaw-gateway';
+  const configResult = await loadConfig();
+  if (configResult.isErr()) {
+    console.error(`Error: ${configResult.error.message}`);
+    return 1;
+  }
+  const config = configResult.value;
 
   const registryResult = await loadRegistry();
   if (registryResult.isErr()) {
@@ -66,24 +93,19 @@ export async function runLogs(
   }
 
   if (!process.stdin.isTTY) {
-    const proc = systemd.streamLogs(service, tenant.name, tenant.uid);
-    const reader = (proc.stdout as ReadableStream).getReader();
-    const decoder = new TextDecoder();
+    // Non-TTY: single fetch and print
     try {
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        process.stdout.write(decoder.decode(value));
-      }
-    } catch {
-      // Stream ended
+      const logs = await fetchLogs(tenant.ipAddress, config.vsock.agentPort);
+      if (logs) process.stdout.write(logs + '\n');
+    } catch (e) {
+      console.error(`Failed to fetch logs: ${e instanceof Error ? e.message : e}`);
+      return 1;
     }
-    proc.kill();
     return 0;
   }
 
   const { waitUntilExit } = render(
-    <LogsApp tenant={tenant} service={service} />,
+    <LogsApp tenant={tenant} agentPort={config.vsock.agentPort} />,
   );
 
   await waitUntilExit();
