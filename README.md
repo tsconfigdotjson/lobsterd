@@ -7,70 +7,20 @@ networking, per-tenant overlay filesystems, and an OpenClaw gateway in each gues
 
 ## Prerequisites
 
-**Host requirements:**
-
 - Linux with KVM enabled (`/dev/kvm` must be accessible)
-- Root access
-- x86_64 architecture
-
-**Install dependencies:**
-
-```bash
-# Bun (runtime)
-curl -fsSL https://bun.sh/install | bash
-
-# Caddy (reverse proxy)
-apt-get install -y caddy
-
-# Firecracker v1.14.1
-ARCH="$(uname -m)"
-curl -fSL "https://github.com/firecracker-microvm/firecracker/releases/download/v1.14.1/firecracker-v1.14.1-${ARCH}.tgz" \
-  -o /tmp/firecracker.tgz
-tar xzf /tmp/firecracker.tgz -C /tmp
-install -m 0755 "/tmp/release-v1.14.1-${ARCH}/firecracker-v1.14.1-${ARCH}" /usr/local/bin/firecracker
-```
-
-## Kernel
-
-Firecracker needs a bare vmlinux kernel image. **Use kernel 6.1 from the
-Firecracker CI artifacts** -- the old quickstart 4.14 kernel is too old for
-Bun/Node.js and will cause the guest agent to silently fail.
-
-```bash
-mkdir -p /var/lib/lobsterd/kernels
-
-# Kernel 6.1.155 matched to Firecracker v1.14
-curl -fSL "https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v1.14/x86_64/vmlinux-6.1.155" \
-  -o /var/lib/lobsterd/kernels/vmlinux
-```
-
-The general URL pattern for other versions:
-```
-https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v{FC_MINOR}/x86_64/vmlinux-{KERNEL_VERSION}
-```
-
-## Guest rootfs
-
-Build the Alpine-based root filesystem image. This downloads Alpine 3.20,
-installs Bun (musl build), OpenClaw (with llama.cpp stripped for size), and the
-lobster-agent, then produces an ext4 image.
-
-```bash
-cd guest
-sudo bash build-rootfs.sh
-sudo mv rootfs.ext4 /var/lib/lobsterd/rootfs.ext4
-```
+- Root access, x86_64 architecture
+- [Bun](https://bun.sh) runtime
 
 ## Setup
 
 ```bash
-# Install dependencies and link the lobsterd CLI
 bun install
-
-# Initialize the host (checks KVM, Firecracker, kernel, rootfs; sets up
-# directories, config, IP forwarding, and Caddy)
 sudo lobsterd init
 ```
+
+`init` will prompt you for a domain (default `lobster.local`) and offer to
+download/install anything that's missing: Firecracker + jailer, the vmlinux
+kernel, the Alpine rootfs, and Caddy.
 
 This creates:
 - `/etc/lobsterd/config.json` -- main configuration
@@ -113,7 +63,7 @@ Each tenant gets:
 - A /30 subnet with a dedicated TAP device and iptables NAT
 - An overlay ext4 filesystem layered on top of the shared read-only rootfs
 - A lobster-agent (TCP on port 52/53) for host-to-guest communication
-- A Caddy reverse-proxy route at `<name>.gradeprompt.com`
+- A Caddy reverse-proxy route at `<name>.<domain>` (default `lobster.local`)
 
 Networking uses kernel `ip=` boot parameter for static configuration inside the
 guest and TAP + MASQUERADE on the host side. The agent listens for JSON-RPC

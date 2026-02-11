@@ -25,13 +25,26 @@ program
 program
   .command("init")
   .description(
-    "Initialize host (check KVM, Firecracker, kernel, rootfs; configure Caddy)",
+    "Initialize host (install deps, check KVM, configure Caddy)",
   )
   .action(async () => {
+    const { createInterface } = await import("node:readline");
+    const rl = createInterface({
+      input: process.stdin,
+      output: process.stdout,
+    });
+    const domainInput = await new Promise<string>((resolve) => {
+      rl.question("Domain for tenant routes [lobster.local]: ", (answer) => {
+        rl.close();
+        resolve(answer.trim());
+      });
+    });
+    const domain = domainInput || undefined;
+
     console.log("Initializing lobsterd host...");
     const configResult = await loadConfig();
     const config = configResult.isOk() ? configResult.value : undefined;
-    const result = await runInit(config);
+    const result = await runInit(config, domain);
 
     if (result.isErr()) {
       console.error(`\n✗ ${result.error.message}`);
