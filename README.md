@@ -54,18 +54,14 @@ https://s3.amazonaws.com/spec.ccfc.min/firecracker-ci/v{FC_MINOR}/x86_64/vmlinux
 ## Guest rootfs
 
 Build the Alpine-based root filesystem image. This downloads Alpine 3.20,
-installs Node.js, OpenClaw, and the lobster-agent, then produces a 2GB ext4 image.
+installs Node.js 22 (musl build from unofficial-builds.nodejs.org), OpenClaw,
+and the lobster-agent, then produces a 2GB ext4 image.
 
 ```bash
 cd guest
 sudo bash build-rootfs.sh
 sudo mv rootfs.ext4 /var/lib/lobsterd/rootfs.ext4
 ```
-
-**Note:** The rootfs uses Alpine's native `nodejs` package (musl-linked). Alpine
-3.20 ships Node.js 20, but OpenClaw requires Node >= 22.12.0. This is a known
-issue -- the guest agent starts correctly but the OpenClaw gateway will not
-launch until a musl-compatible Node 22 build is used in the rootfs.
 
 ## Setup
 

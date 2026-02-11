@@ -46,8 +46,13 @@ echo "==> Installing packages inside chroot"
 chroot "$MOUNT_DIR" /bin/sh -c '
   set -e
   apk update
-  apk add alpine-base openrc git curl nodejs npm
+  apk add alpine-base openrc git curl libstdc++ libgcc
 '
+
+echo "==> Installing Node.js 22 (musl build)"
+NODE_VERSION="22.14.0"
+curl -fSL "https://unofficial-builds.nodejs.org/download/release/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64-musl.tar.xz" \
+  | tar xJ --strip-components=1 -C "$MOUNT_DIR/usr/local"
 
 echo "==> Setting up init system"
 # Enable necessary services
@@ -76,7 +81,7 @@ install -m 0644 lobster-agent.mjs "$MOUNT_DIR/opt/lobster-agent/agent.mjs"
 cat > "$MOUNT_DIR/etc/init.d/lobster-agent" <<'SVC'
 #!/sbin/openrc-run
 name="lobster-agent"
-command="/usr/bin/node"
+command="/usr/local/bin/node"
 command_args="/opt/lobster-agent/agent.mjs"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
