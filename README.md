@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="header.jpg" alt="lobsterd" />
+</p>
+
 # lobsterd
 
 Firecracker MicroVM Tenant Orchestrator. Spawns lightweight VMs with isolated
