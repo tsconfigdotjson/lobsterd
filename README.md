@@ -34,6 +34,15 @@ This creates:
 # Spawn a new tenant
 sudo lobsterd spawn <name>
 
+# SSH into a tenant (interactive shell)
+sudo lobsterd exec <name>
+
+# Run a command inside a tenant via SSH
+sudo lobsterd exec <name> -- ls /opt
+
+# Open the OpenClaw configuration TUI inside a tenant
+sudo lobsterd configure <name>
+
 # Remove a tenant
 sudo lobsterd evict <name>
 
@@ -101,7 +110,7 @@ curl -H "Authorization: Bearer $TOKEN" http://localhost:7070/tenants
 # Spawn a tenant
 curl -X POST -H "Authorization: Bearer $TOKEN" \
   -H "Content-Type: application/json" \
-  -d '{"name": "my-tenant", "apiKey": "sk-..."}' \
+  -d '{"name": "my-tenant"}' \
   http://localhost:7070/tenants
 
 # Health-check a tenant
@@ -129,6 +138,7 @@ Each tenant gets:
 - A /30 subnet with a dedicated TAP device and iptables NAT
 - An overlay ext4 filesystem layered on top of the shared read-only rootfs
 - A lobster-agent (TCP on port 52/53) for host-to-guest communication
+- An SSH server (dropbear) with per-tenant ed25519 keypair for `lobsterd exec`
 - A Caddy reverse-proxy route at `<name>.<domain>` (default `lobster.local`)
 
 Networking uses kernel `ip=` boot parameter for static configuration inside the
@@ -168,7 +178,8 @@ All tenants share a read-only Alpine 3.20 rootfs with per-tenant writable
 overlays via overlayfs. The rootfs is stripped after build: the apk package
 manager, curl, git, wget, and compilers are removed, along with busybox applets
 useful for reconnaissance or exploitation (nc, telnet, ftp, tftp, httpd,
-traceroute, nslookup). The root account is locked and the serial console is
+traceroute, nslookup). Dropbear (lightweight SSH server) is intentionally kept
+to support `lobsterd exec`. The root account is locked and the serial console is
 disabled (`8250.nr_uarts=0` in kernel boot args, getty removed from inittab).
 
 ### Agent auth
@@ -177,6 +188,15 @@ The lobster-agent inside each VM authenticates host commands using a per-tenant
 UUID token passed via the kernel command line. Authentication uses timing-safe
 comparison and is fail-closed: if the token is missing or invalid, all requests
 are rejected. Messages are capped at 1 MB to prevent memory exhaustion.
+
+### SSH access
+
+Each tenant gets a dedicated ed25519 keypair generated during `spawn` and stored
+at `/var/lib/lobsterd/ssh/<name>/id_ed25519`. The public key is injected into the
+VM via the lobster-agent and written to `/root/.ssh/authorized_keys`. Dropbear
+listens only on the tenant's guest IP (not `0.0.0.0`), and the keypair is
+removed on `evict`. The `lobsterd exec` command wraps SSH with the correct key
+and options.
 
 ### TLS termination
 
@@ -193,9 +213,9 @@ tuning).
 ```
 src/
   index.tsx           CLI entry point (commander)
-  commands/           init, spawn, evict, molt, snap, watch, tank, logs
+  commands/           init, spawn, evict, exec, molt, snap, watch, tank, logs
   reef/               REST API server (Hono + OpenAPI)
-  system/             firecracker API, networking, caddy, overlay images, agent TCP
+  system/             firecracker API, networking, caddy, overlay images, agent TCP, SSH keypairs
   config/             zod schemas, defaults, JSON loader with file locking
   checks/             VM and network health checks
   repair/             VM and network repair logic
