@@ -83,8 +83,10 @@ function startAgent() {
             conn.end(`${JSON.stringify({ error: "unauthorized" })}\n`);
             return;
           }
-          const response = handleMessage(msg);
-          conn.end(`${response}\n`);
+          handleMessage(msg).then(
+            (response) => conn.end(`${response}\n`),
+            (e) => conn.end(`${JSON.stringify({ error: e.message })}\n`),
+          );
         } catch (e) {
           conn.end(`${JSON.stringify({ error: e.message })}\n`);
         }
@@ -98,8 +100,10 @@ function startAgent() {
             conn.end(`${JSON.stringify({ error: "unauthorized" })}\n`);
             return;
           }
-          const response = handleMessage(msg);
-          conn.end(`${response}\n`);
+          handleMessage(msg).then(
+            (response) => conn.end(`${response}\n`),
+            (e) => conn.end(`${JSON.stringify({ error: e.message })}\n`),
+          );
         } catch (e) {
           conn.end(`${JSON.stringify({ error: e.message })}\n`);
         }
@@ -144,7 +148,7 @@ function startAgent() {
   });
 }
 
-function handleMessage(msg) {
+async function handleMessage(msg) {
   switch (msg.type) {
     case "inject-secrets":
       return handleInjectSecrets(msg.secrets);
@@ -161,7 +165,7 @@ function handleMessage(msg) {
         return "No logs available";
       }
     case "get-cron-schedules":
-      return handleGetCronSchedules();
+      return await handleGetCronSchedules();
     case "get-active-connections":
       return handleGetActiveConnections();
     case "shutdown":
@@ -259,7 +263,19 @@ function handleGetStats() {
   }
 }
 
-function handleGetCronSchedules() {
+async function handleGetCronSchedules() {
+  // Poke the gateway via cron.list RPC to trigger recomputeNextRuns(),
+  // which persists fresh nextRunAtMs values to jobs.json
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (token && gatewayProcess) {
+    try {
+      await refreshCronViaGateway(token);
+    } catch (e) {
+      console.log(`[lobster-agent] Gateway cron refresh failed: ${e.message}`);
+    }
+  }
+
+  // Read the (now-fresh) file
   try {
     const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
     const data = JSON.parse(raw);
@@ -278,6 +294,103 @@ function handleGetCronSchedules() {
   } catch {
     return JSON.stringify({ schedules: [] });
   }
+}
+
+function refreshCronViaGateway(token) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn(val);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      settle(reject, new Error("timeout"));
+      try {
+        ws.close();
+      } catch {}
+    }, 5000);
+
+    const ws = new WebSocket("ws://127.0.0.1:9000");
+    let nextId = 1;
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        // Step 1: Server sends connect challenge → send connect request
+        if (msg.type === "event" && msg.event === "connect.challenge") {
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "connect",
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: "lobster-agent",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role: "operator",
+                scopes: ["operator.read"],
+                auth: { token },
+              },
+            }),
+          );
+          return;
+        }
+
+        // Step 2: Connect response → send cron.list
+        if (msg.type === "res" && msg.id === "1") {
+          if (!msg.ok) {
+            ws.close();
+            settle(reject, new Error("connect rejected"));
+            return;
+          }
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "cron.list",
+              params: {},
+            }),
+          );
+          return;
+        }
+
+        // Step 3: cron.list response → done, file is now fresh
+        if (msg.type === "res" && msg.id === "2") {
+          ws.close();
+          if (!msg.ok) {
+            settle(reject, new Error("cron.list failed"));
+            return;
+          }
+          settle(resolve, undefined);
+        }
+      } catch (e) {
+        try {
+          ws.close();
+        } catch {}
+        settle(reject, e);
+      }
+    };
+
+    ws.onerror = () => {
+      settle(reject, new Error("WebSocket connection failed"));
+    };
+
+    ws.onclose = () => {
+      settle(reject, new Error("WebSocket closed before completion"));
+    };
+  });
 }
 
 function handleGetActiveConnections() {
@@ -312,7 +425,10 @@ function handleGetActiveConnections() {
       const data = JSON.parse(raw);
       if (data.version === 1 && Array.isArray(data.jobs)) {
         const running = data.jobs.some(
-          (j) => j.enabled !== false && j.state && typeof j.state.runningAtMs === "number",
+          (j) =>
+            j.enabled !== false &&
+            j.state &&
+            typeof j.state.runningAtMs === "number",
         );
         if (running) {
           count++;
