@@ -74,6 +74,23 @@ INITTAB
 # Password-less root
 sed -i 's/^root:.*/root::0:0:root:\/root:\/bin\/sh/' "$MOUNT_DIR/etc/passwd"
 
+echo "==> Configuring shell environment"
+mkdir -p "$MOUNT_DIR/etc/profile.d"
+cat > "$MOUNT_DIR/etc/profile.d/lobsterd.sh" <<'PROFILE'
+export PATH="/usr/local/bin:$PATH"
+alias openclaw="bun /opt/openclaw/openclaw.mjs"
+PROFILE
+
+# Ensure non-interactive SSH commands also get /usr/local/bin
+cat > "$MOUNT_DIR/root/.bashrc" <<'BASHRC'
+export PATH="/usr/local/bin:$PATH"
+BASHRC
+# Dropbear uses /bin/sh (busybox ash) which reads ENV on startup
+echo 'export ENV="/root/.ashrc"' >> "$MOUNT_DIR/root/.profile"
+cat > "$MOUNT_DIR/root/.ashrc" <<'ASHRC'
+export PATH="/usr/local/bin:$PATH"
+ASHRC
+
 echo "==> Installing overlay-init"
 install -m 0755 "$SCRIPT_DIR/overlay-init" "$MOUNT_DIR/sbin/overlay-init"
 
