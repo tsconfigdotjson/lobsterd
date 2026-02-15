@@ -130,7 +130,7 @@ start() {
   ebegin "Starting ${name}"
   start-stop-daemon --start --pidfile "$pidfile" \
     --exec "$command" -- \
-    -F -s -j -k -p "${guest_ip}:22" -P "$pidfile"
+    -s -j -k -p "${guest_ip}:22" -P "$pidfile"
   eend $?
 }
 SVC
