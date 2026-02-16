@@ -99,6 +99,8 @@ command="/usr/local/bin/bun"
 command_args="/opt/lobster-agent/agent.mjs"
 command_background=true
 pidfile="/run/${RC_SVCNAME}.pid"
+output_log="/tmp/lobster-agent.log"
+error_log="/tmp/lobster-agent.log"
 depend() {
   need net
 }
