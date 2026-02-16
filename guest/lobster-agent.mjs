@@ -322,54 +322,72 @@ async function handlePokeCron() {
     return JSON.stringify({ error: "Gateway not running" });
   }
 
+  // Try RPC first, fall back to on-disk state for the job list
+  let jobs = [];
   try {
     const listResult = await gatewayRpc(token, "cron.list", {});
-    if (!listResult.ok) {
-      return JSON.stringify({ error: "cron.list failed" });
-    }
-
-    const jobs = (listResult.data?.jobs ?? []).filter(
-      (j) => j.enabled !== false && j.state?.nextRunAtMs,
-    );
-    if (jobs.length === 0) {
-      return JSON.stringify({ ok: true, deferred: 0 });
-    }
-
-    // Schedule deferred triggers for upcoming jobs. Fire 5s AFTER the
-    // scheduled cron time — this gives OpenClaw's own stale timer a
-    // chance to handle it naturally. Our cron.run(due) acts as the
-    // safety net: if OpenClaw already ran the job, "due" returns
-    // not-due (no-op); if it didn't, we catch it.
-    const POKE_DELAY_MS = 5_000;
-    const now = Date.now();
-    let deferred = 0;
-    for (const job of jobs) {
-      const delay = Math.max(0, job.state.nextRunAtMs - now) + POKE_DELAY_MS;
-      console.log(
-        `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
+    if (listResult.ok) {
+      jobs = (listResult.data?.jobs ?? []).filter(
+        (j) => j.enabled !== false && j.state?.nextRunAtMs,
       );
-      setTimeout(async () => {
-        try {
-          const result = await gatewayRpc(token, "cron.run", {
-            id: job.id,
-            mode: "due",
-          });
-          console.log(
-            `[lobster-agent] cron.run ${job.id}: ran=${result.data?.ran ?? false}`,
-          );
-        } catch (e) {
-          console.log(
-            `[lobster-agent] cron.run for ${job.id} failed: ${e.message}`,
-          );
-        }
-      }, delay);
-      deferred++;
     }
-
-    return JSON.stringify({ ok: true, deferred });
-  } catch (e) {
-    return JSON.stringify({ error: e.message });
+  } catch {
+    // Fall through to disk fallback
   }
+  if (jobs.length === 0) {
+    const diskJobs = readCronJobsFromDisk();
+    const now = Date.now();
+    jobs = diskJobs
+      .filter((j) => j.enabled !== false)
+      .map((j) => ({
+        ...j,
+        state: {
+          ...j.state,
+          nextRunAtMs:
+            j.state?.nextRunAtMs > now
+              ? j.state.nextRunAtMs
+              : computeNextRunFromSchedule(j.schedule, now),
+        },
+      }))
+      .filter((j) => j.state?.nextRunAtMs);
+  }
+
+  if (jobs.length === 0) {
+    return JSON.stringify({ ok: true, deferred: 0 });
+  }
+
+  // Schedule deferred triggers for upcoming jobs. Fire 5s AFTER the
+  // scheduled cron time — this gives OpenClaw's own stale timer a
+  // chance to handle it naturally. Our cron.run(due) acts as the
+  // safety net: if OpenClaw already ran the job, "due" returns
+  // not-due (no-op); if it didn't, we catch it.
+  const POKE_DELAY_MS = 5_000;
+  const now = Date.now();
+  let deferred = 0;
+  for (const job of jobs) {
+    const delay = Math.max(0, job.state.nextRunAtMs - now) + POKE_DELAY_MS;
+    console.log(
+      `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
+    );
+    setTimeout(async () => {
+      try {
+        const result = await gatewayRpc(token, "cron.run", {
+          id: job.id,
+          mode: "due",
+        });
+        console.log(
+          `[lobster-agent] cron.run ${job.id}: ran=${result.data?.ran ?? false}`,
+        );
+      } catch (e) {
+        console.log(
+          `[lobster-agent] cron.run for ${job.id} failed: ${e.message}`,
+        );
+      }
+    }, delay);
+    deferred++;
+  }
+
+  return JSON.stringify({ ok: true, deferred });
 }
 
 function handleGetStats() {
@@ -386,29 +404,81 @@ function handleGetStats() {
   }
 }
 
-async function handleGetCronSchedules() {
-  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
-  if (!token || !gatewayProcess) {
-    return JSON.stringify({ schedules: [] });
+/** Compute next run time from a schedule definition */
+function computeNextRunFromSchedule(schedule, now) {
+  if (!schedule) {
+    return null;
   }
-
-  try {
-    const result = await gatewayRpc(token, "cron.list", {});
-    if (!result.ok) {
-      return JSON.stringify({ schedules: [] });
+  if (schedule.kind === "every" && schedule.everyMs > 0) {
+    const anchor = schedule.anchorMs || now;
+    if (anchor > now) {
+      return anchor;
     }
-    const schedules = (result.data?.jobs ?? [])
-      .filter((j) => j.enabled !== false && j.state?.nextRunAtMs > 0)
-      .map((j) => ({
+    const elapsed = now - anchor;
+    const periods = Math.ceil(elapsed / schedule.everyMs);
+    return anchor + periods * schedule.everyMs;
+  }
+  if (schedule.kind === "at") {
+    const at =
+      typeof schedule.at === "string" ? new Date(schedule.at).getTime() : null;
+    return at && at > now ? at : null;
+  }
+  return null;
+}
+
+/** Read cron jobs from OpenClaw's on-disk state as a fallback */
+function readCronJobsFromDisk() {
+  try {
+    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
+    const store = JSON.parse(raw);
+    return store.jobs || [];
+  } catch {
+    return [];
+  }
+}
+
+function jobsToSchedules(jobs, now) {
+  return jobs
+    .filter((j) => j.enabled !== false)
+    .map((j) => {
+      const nextRunAtMs =
+        j.state?.nextRunAtMs > now
+          ? j.state.nextRunAtMs
+          : computeNextRunFromSchedule(j.schedule, now);
+      if (!nextRunAtMs) {
+        return null;
+      }
+      return {
         id: j.id,
         name: j.name || j.id,
-        nextRunAtMs: j.state.nextRunAtMs,
+        nextRunAtMs,
         schedule: j.schedule || null,
-      }));
-    return JSON.stringify({ schedules });
-  } catch {
-    return JSON.stringify({ schedules: [] });
+      };
+    })
+    .filter(Boolean);
+}
+
+async function handleGetCronSchedules() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  const now = Date.now();
+
+  // Try the authoritative RPC first
+  if (token && gatewayProcess) {
+    try {
+      const result = await gatewayRpc(token, "cron.list", {});
+      if (result.ok) {
+        const schedules = jobsToSchedules(result.data?.jobs ?? [], now);
+        return JSON.stringify({ schedules });
+      }
+    } catch {
+      // Fall through to disk fallback
+    }
   }
+
+  // Fallback: read from OpenClaw's on-disk state and compute next runs
+  const jobs = readCronJobsFromDisk();
+  const schedules = jobsToSchedules(jobs, now);
+  return JSON.stringify({ schedules });
 }
 
 /** Send a single RPC to the local gateway, handling connect + device auth */
