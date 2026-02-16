@@ -322,71 +322,86 @@ async function handlePokeCron() {
     return JSON.stringify({ error: "Gateway not running" });
   }
 
-  // Read jobs.json to find enabled jobs with their nextRunAtMs
-  let jobs = [];
   try {
-    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
-    const data = JSON.parse(raw);
-    if (data.version === 1 && Array.isArray(data.jobs)) {
-      jobs = data.jobs.filter(
-        (j) =>
-          j.enabled !== false &&
-          j.state &&
-          typeof j.state.nextRunAtMs === "number",
-      );
+    // Get authoritative job list via RPC (triggers recomputeNextRuns server-side)
+    const listResult = await gatewayRpc(token, "cron.list", {});
+    if (!listResult.ok) {
+      return JSON.stringify({ error: "cron.list failed" });
     }
-  } catch {
-    return JSON.stringify({ error: "No cron jobs found" });
-  }
 
-  if (jobs.length === 0) {
-    return JSON.stringify({ ok: true, triggered: 0, deferred: 0 });
-  }
-
-  const now = Date.now();
-  const overdue = jobs.filter((j) => now >= j.state.nextRunAtMs);
-  const upcoming = jobs.filter((j) => now < j.state.nextRunAtMs);
-
-  // Execute overdue jobs immediately (no mode = defaults to "force")
-  let triggered = 0;
-  if (overdue.length > 0) {
-    try {
-      triggered = await runCronJobs(
-        token,
-        overdue.map((j) => j.id),
-      );
-    } catch (e) {
-      console.log(`[lobster-agent] Poke cron (overdue) failed: ${e.message}`);
-    }
-  }
-
-  // Schedule deferred triggers for upcoming jobs. Fire 15s AFTER the
-  // scheduled cron time — this gives OpenClaw's own stale timer a
-  // chance to handle it naturally. Our cron.run(due) acts as the
-  // safety net: if OpenClaw already ran the job, "due" returns
-  // not-due (no-op); if it didn't, we catch it.
-  const POKE_DELAY_MS = 5_000;
-  for (const job of upcoming) {
-    const delay = job.state.nextRunAtMs - now + POKE_DELAY_MS;
-    console.log(
-      `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
+    const jobs = (listResult.data?.jobs ?? []).filter(
+      (j) => j.enabled !== false && j.state?.nextRunAtMs,
     );
-    setTimeout(async () => {
+    if (jobs.length === 0) {
+      return JSON.stringify({ ok: true, triggered: 0 });
+    }
+
+    // Run each job with mode "due" — overdue ones execute + re-arm timer,
+    // not-due ones are a no-op. A single successful run re-arms for all jobs.
+    let triggered = 0;
+    for (const job of jobs) {
       try {
-        await runCronJobs(token, [job.id], "due");
+        const runResult = await gatewayRpc(token, "cron.run", {
+          id: job.id,
+          mode: "due",
+        });
+        if (runResult.ok && runResult.data?.ran) {
+          triggered++;
+        }
       } catch (e) {
         console.log(
-          `[lobster-agent] Deferred cron trigger for ${job.id} failed: ${e.message}`,
+          `[lobster-agent] cron.run for ${job.id} failed: ${e.message}`,
         );
       }
-    }, delay);
-  }
+    }
 
-  return JSON.stringify({ ok: true, triggered, deferred: upcoming.length });
+    return JSON.stringify({ ok: true, triggered });
+  } catch (e) {
+    return JSON.stringify({ error: e.message });
+  }
 }
 
-/** Connect to gateway WebSocket and call cron.run for each job ID */
-function runCronJobs(token, jobIds, mode) {
+function handleGetStats() {
+  if (!gatewayProcess || !gatewayProcess.pid) {
+    return JSON.stringify({ gatewayPid: null, memoryKb: 0 });
+  }
+  try {
+    const status = readFileSync(`/proc/${gatewayProcess.pid}/status`, "utf-8");
+    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
+    const memoryKb = match ? parseInt(match[1], 10) : 0;
+    return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb });
+  } catch {
+    return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb: 0 });
+  }
+}
+
+async function handleGetCronSchedules() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (!token || !gatewayProcess) {
+    return JSON.stringify({ schedules: [] });
+  }
+
+  try {
+    const result = await gatewayRpc(token, "cron.list", {});
+    if (!result.ok) {
+      return JSON.stringify({ schedules: [] });
+    }
+    const schedules = (result.data?.jobs ?? [])
+      .filter((j) => j.enabled !== false && j.state?.nextRunAtMs > 0)
+      .map((j) => ({
+        id: j.id,
+        name: j.name || j.id,
+        nextRunAtMs: j.state.nextRunAtMs,
+        schedule: j.schedule || null,
+      }));
+    return JSON.stringify({ schedules });
+  } catch {
+    return JSON.stringify({ schedules: [] });
+  }
+}
+
+/** Send a single RPC to the local gateway, handling connect + device auth */
+function gatewayRpc(token, method, params) {
   return new Promise((resolve, reject) => {
     let settled = false;
     const settle = (fn, val) => {
@@ -406,29 +421,12 @@ function runCronJobs(token, jobIds, mode) {
 
     const ws = new WebSocket("ws://127.0.0.1:9000");
     let nextId = 1;
-    let triggered = 0;
-    let pendingJobIdx = 0;
-
-    function sendNextJobOrFinish() {
-      if (pendingJobIdx >= jobIds.length) {
-        ws.close();
-        settle(resolve, triggered);
-        return;
-      }
-      const id = String(nextId++);
-      const params = { jobId: jobIds[pendingJobIdx] };
-      if (mode) {
-        params.mode = mode;
-      }
-      ws.send(JSON.stringify({ type: "req", id, method: "cron.run", params }));
-      pendingJobIdx++;
-    }
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
 
-        // Step 1: Server sends connect challenge → authenticate
+        // Step 1: Connect challenge → authenticate with device identity
         if (msg.type === "event" && msg.event === "connect.challenge") {
           const id = String(nextId++);
           const scopes = ["operator.admin"];
@@ -456,143 +454,7 @@ function runCronJobs(token, jobIds, mode) {
           return;
         }
 
-        // Step 2: Connect response → start sending cron.run requests
-        if (msg.type === "res" && msg.id === "1") {
-          if (!msg.ok) {
-            ws.close();
-            settle(reject, new Error("connect rejected"));
-            return;
-          }
-          sendNextJobOrFinish();
-          return;
-        }
-
-        // Step 3+: cron.run responses → send next or finish
-        if (msg.type === "res") {
-          if (msg.ok) {
-            triggered++;
-          }
-          sendNextJobOrFinish();
-        }
-      } catch (e) {
-        try {
-          ws.close();
-        } catch {}
-        settle(reject, e);
-      }
-    };
-
-    ws.onerror = () => {
-      settle(reject, new Error("WebSocket connection failed"));
-    };
-
-    ws.onclose = () => {
-      settle(reject, new Error("WebSocket closed before completion"));
-    };
-  });
-}
-
-function handleGetStats() {
-  if (!gatewayProcess || !gatewayProcess.pid) {
-    return JSON.stringify({ gatewayPid: null, memoryKb: 0 });
-  }
-  try {
-    const status = readFileSync(`/proc/${gatewayProcess.pid}/status`, "utf-8");
-    const match = status.match(/^VmRSS:\s+(\d+)\s+kB$/m);
-    const memoryKb = match ? parseInt(match[1], 10) : 0;
-    return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb });
-  } catch {
-    return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb: 0 });
-  }
-}
-
-async function handleGetCronSchedules() {
-  // Poke the gateway via cron.list RPC to trigger recomputeNextRuns(),
-  // which persists fresh nextRunAtMs values to jobs.json
-  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
-  if (token && gatewayProcess) {
-    try {
-      await refreshCronViaGateway(token);
-    } catch (e) {
-      console.log(`[lobster-agent] Gateway cron refresh failed: ${e.message}`);
-    }
-  }
-
-  // Read the (now-fresh) file
-  try {
-    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
-    const data = JSON.parse(raw);
-    if (data.version !== 1 || !Array.isArray(data.jobs)) {
-      return JSON.stringify({ schedules: [] });
-    }
-    const schedules = data.jobs
-      .filter((j) => j.enabled !== false && j.state && j.state.nextRunAtMs > 0)
-      .map((j) => ({
-        id: j.id,
-        name: j.name || j.id,
-        nextRunAtMs: j.state.nextRunAtMs,
-        schedule: j.schedule || null,
-      }));
-    return JSON.stringify({ schedules });
-  } catch {
-    return JSON.stringify({ schedules: [] });
-  }
-}
-
-function refreshCronViaGateway(token) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    const settle = (fn, val) => {
-      if (!settled) {
-        settled = true;
-        clearTimeout(timer);
-        fn(val);
-      }
-    };
-
-    const timer = setTimeout(() => {
-      settle(reject, new Error("timeout"));
-      try {
-        ws.close();
-      } catch {}
-    }, 5000);
-
-    const ws = new WebSocket("ws://127.0.0.1:9000");
-    let nextId = 1;
-
-    ws.onmessage = (event) => {
-      try {
-        const msg = JSON.parse(event.data);
-
-        // Step 1: Server sends connect challenge → send connect request
-        if (msg.type === "event" && msg.event === "connect.challenge") {
-          const id = String(nextId++);
-          const scopes = ["operator.admin"];
-          ws.send(
-            JSON.stringify({
-              type: "req",
-              id,
-              method: "connect",
-              params: {
-                minProtocol: 3,
-                maxProtocol: 3,
-                client: {
-                  id: "gateway-client",
-                  version: "1.0.0",
-                  platform: "linux",
-                  mode: "backend",
-                },
-                role: "operator",
-                scopes,
-                auth: { token },
-                device: buildDeviceAuth(token, scopes),
-              },
-            }),
-          );
-          return;
-        }
-
-        // Step 2: Connect response → send cron.list
+        // Step 2: Connect response → send the actual RPC
         if (msg.type === "res" && msg.id === "1") {
           if (!msg.ok) {
             ws.close();
@@ -600,25 +462,14 @@ function refreshCronViaGateway(token) {
             return;
           }
           const id = String(nextId++);
-          ws.send(
-            JSON.stringify({
-              type: "req",
-              id,
-              method: "cron.list",
-              params: {},
-            }),
-          );
+          ws.send(JSON.stringify({ type: "req", id, method, params }));
           return;
         }
 
-        // Step 3: cron.list response → done, file is now fresh
+        // Step 3: RPC response → done
         if (msg.type === "res" && msg.id === "2") {
           ws.close();
-          if (!msg.ok) {
-            settle(reject, new Error("cron.list failed"));
-            return;
-          }
-          settle(resolve, undefined);
+          settle(resolve, { ok: msg.ok, data: msg.data, error: msg.error });
         }
       } catch (e) {
         try {
