@@ -85,6 +85,9 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
         auth: {
           mode: "token",
         },
+        controlUi: {
+          dangerouslyDisableDeviceAuth: true,
+        },
       },
     },
   },
