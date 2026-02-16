@@ -469,8 +469,8 @@ function gatewayRpc(token, method, params) {
             console.log(
               `[gatewayRpc] ${method}: connect rejected: ${JSON.stringify(msg.error)}`,
             );
-            ws.close();
             settle(reject, new Error("connect rejected"));
+            ws.close();
             return;
           }
           const id = String(nextId++);
@@ -478,10 +478,11 @@ function gatewayRpc(token, method, params) {
           return;
         }
 
-        // Step 3: RPC response → done
+        // Step 3: RPC response → done (settle before close to avoid
+        // Bun's synchronous onclose firing reject first)
         if (msg.type === "res" && msg.id === "2") {
-          ws.close();
           settle(resolve, { ok: msg.ok, data: msg.data, error: msg.error });
+          ws.close();
         }
       } catch (e) {
         console.log(`[gatewayRpc] ${method}: error in onmessage: ${e.message}`);
