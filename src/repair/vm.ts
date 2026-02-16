@@ -1,5 +1,6 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import { saveRegistry } from "../config/loader.js";
+import { execUnchecked } from "../system/exec.js";
 import * as fc from "../system/firecracker.js";
 import * as jailer from "../system/jailer.js";
 import * as vsock from "../system/vsock.js";
@@ -18,15 +19,19 @@ export function repairVmProcess(
 ): ResultAsync<RepairResult, LobsterError> {
   const actions: string[] = [];
 
-  // Kill stale process if any
+  // Kill ALL firecracker processes for this vmId (not just the recorded PID)
+  // to prevent zombie processes from previous repair cycles hijacking the API socket
   return ResultAsync.fromSafePromise(
     (async () => {
       if (tenant.vmPid) {
         try {
           process.kill(tenant.vmPid, "SIGKILL");
         } catch {}
-        actions.push(`Killed stale VM process ${tenant.vmPid}`);
+        actions.push(`Killed recorded VM process ${tenant.vmPid}`);
       }
+      // Also kill any orphaned firecracker processes for the same VM ID
+      await execUnchecked(["pkill", "-9", "-f", `--id ${tenant.vmId}`]);
+      await Bun.sleep(200);
     })(),
   )
     .andThen(() =>
