@@ -2,6 +2,7 @@ export function fetchLogs(
   guestIp: string,
   port: number,
   agentToken: string,
+  service?: string,
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const { Socket } = require("node:net") as typeof import("node:net");
@@ -14,7 +15,7 @@ export function fetchLogs(
 
     socket.connect(port, guestIp, () => {
       socket.write(
-        `${JSON.stringify({ type: "get-logs", token: agentToken })}\n`,
+        `${JSON.stringify({ type: "get-logs", token: agentToken, service })}\n`,
       );
     });
     socket.on("data", (chunk: Buffer) => {

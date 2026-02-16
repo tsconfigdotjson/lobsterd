@@ -31,28 +31,12 @@ function readTapRxBytes(tapDev: string): number {
   }
 }
 
-/**
- * For each cron schedule, compute the next future run time.
- * "every" schedules often have a stale nextRunAtMs (OpenClaw doesn't always
- * update it promptly), so we advance by everyMs intervals from the anchor
- * until we find a time in the future.
- */
+/** Extract future run times from cron schedules (cron.list returns fresh data) */
 function computeFutureRunTimes(
   schedules: CronScheduleInfo[],
   now: number,
 ): number[] {
-  const result: number[] = [];
-  for (const s of schedules) {
-    if (s.nextRunAtMs > now) {
-      result.push(s.nextRunAtMs);
-    } else if (s.schedule?.kind === "every" && s.schedule.everyMs) {
-      const interval = s.schedule.everyMs;
-      const elapsed = now - s.nextRunAtMs;
-      const steps = Math.ceil(elapsed / interval);
-      result.push(s.nextRunAtMs + steps * interval);
-    }
-  }
-  return result;
+  return schedules.filter((s) => s.nextRunAtMs > now).map((s) => s.nextRunAtMs);
 }
 
 export function runSuspend(

@@ -168,7 +168,9 @@ export function startScheduler(
       if (trigger === "cron") {
         // Poke cron via cron.run(mode:"due") to trigger overdue jobs and re-arm
         // the timer immediately, instead of waiting up to 60s for the stale
-        // setTimeout clamp to expire after snapshot resume
+        // setTimeout clamp to expire after snapshot resume.
+        // The agent defers each run to 5s after the job's nextRunAtMs,
+        // giving OpenClaw's own timer a chance to fire naturally first.
         const idx = registry.tenants.findIndex((t) => t.name === name);
         if (idx !== -1) {
           await vsock
@@ -179,12 +181,11 @@ export function startScheduler(
             )
             .orElse(() => okAsync(undefined));
         }
-        // Buffer until the deferred cron poke fires (cronWakeAheadMs + 5s).
-        // Once the job starts, runningAtMs in jobs.json counts as an active
-        // connection, so the idle detector won't suspend mid-execution.
+        // Give the cron job time to start executing (runningAtMs in jobs.json
+        // counts as an active connection and prevents re-suspend).
         idleSince.set(
           name,
-          Date.now() + config.watchdog.cronWakeAheadMs + 10_000,
+          Date.now() + config.watchdog.cronWakeAheadMs + 5_000,
         );
       } else {
         idleSince.delete(name);
