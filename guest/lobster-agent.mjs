@@ -329,18 +329,24 @@ async function handlePokeCron() {
 
   // Try RPC first, fall back to on-disk state for the job list
   let jobs = [];
+  let source = "none";
   try {
     const listResult = await gatewayRpc(token, "cron.list", {});
+    console.log(
+      `[poke-cron] RPC ok=${listResult.ok} jobs=${(listResult.data?.jobs ?? []).length}`,
+    );
     if (listResult.ok) {
       jobs = (listResult.data?.jobs ?? []).filter(
         (j) => j.enabled !== false && j.state?.nextRunAtMs,
       );
+      source = "rpc";
     }
-  } catch {
-    // Fall through to disk fallback
+  } catch (e) {
+    console.log(`[poke-cron] RPC failed: ${e.message}`);
   }
   if (jobs.length === 0) {
     const diskJobs = readCronJobsFromDisk();
+    console.log(`[poke-cron] disk fallback: ${diskJobs.length} job(s) on disk`);
     const now = Date.now();
     jobs = diskJobs
       .filter((j) => j.enabled !== false)
@@ -355,7 +361,13 @@ async function handlePokeCron() {
         },
       }))
       .filter((j) => j.state?.nextRunAtMs);
+    if (jobs.length > 0) {
+      source = "disk";
+    }
   }
+  console.log(
+    `[poke-cron] source=${source} jobs=${jobs.length}`,
+  );
 
   if (jobs.length === 0) {
     return JSON.stringify({ ok: true, deferred: 0 });
@@ -471,18 +483,38 @@ async function handleGetCronSchedules() {
   if (token && gatewayProcess) {
     try {
       const result = await gatewayRpc(token, "cron.list", {});
+      console.log(
+        `[cron-schedules] RPC ok=${result.ok} jobs=${(result.data?.jobs ?? []).length}`,
+      );
       if (result.ok) {
-        const schedules = jobsToSchedules(result.data?.jobs ?? [], now);
+        const rawJobs = result.data?.jobs ?? [];
+        for (const j of rawJobs) {
+          console.log(
+            `[cron-schedules]   job=${j.id} enabled=${j.enabled} nextRunAtMs=${j.state?.nextRunAtMs} schedule=${JSON.stringify(j.schedule)}`,
+          );
+        }
+        const schedules = jobsToSchedules(rawJobs, now);
+        console.log(
+          `[cron-schedules] RPC path: ${schedules.length} schedule(s) returned`,
+        );
         return JSON.stringify({ schedules });
       }
-    } catch {
-      // Fall through to disk fallback
+    } catch (e) {
+      console.log(`[cron-schedules] RPC failed: ${e.message}`);
     }
+  } else {
+    console.log(
+      `[cron-schedules] RPC skipped: token=${!!token} gateway=${!!gatewayProcess}`,
+    );
   }
 
   // Fallback: read from OpenClaw's on-disk state and compute next runs
   const jobs = readCronJobsFromDisk();
+  console.log(`[cron-schedules] disk fallback: ${jobs.length} job(s) on disk`);
   const schedules = jobsToSchedules(jobs, now);
+  console.log(
+    `[cron-schedules] disk path: ${schedules.length} schedule(s) returned`,
+  );
   return JSON.stringify({ schedules });
 }
 
