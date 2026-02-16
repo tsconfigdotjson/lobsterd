@@ -115,6 +115,12 @@ export function startWatchdog(
         }
 
         if (needsRepair) {
+          // Re-check in-memory status — the scheduler may have marked
+          // the tenant suspended after health checks started
+          if (tenant.status !== "active") {
+            continue;
+          }
+
           // Re-check on-disk status before repairing — a manual suspend/resume
           // may have started after the tick began, making repairs dangerous
           const preRepairCheck = await loadRegistry();
