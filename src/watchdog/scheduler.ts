@@ -179,8 +179,13 @@ export function startScheduler(
             )
             .orElse(() => okAsync(undefined));
         }
-        // Give the cron job time to start and establish connections
-        idleSince.set(name, Date.now() + config.watchdog.cronWakeAheadMs);
+        // Buffer until the deferred cron poke fires (cronWakeAheadMs + 5s).
+        // Once the job starts, runningAtMs in jobs.json counts as an active
+        // connection, so the idle detector won't suspend mid-execution.
+        idleSince.set(
+          name,
+          Date.now() + config.watchdog.cronWakeAheadMs + 10_000,
+        );
       } else {
         idleSince.delete(name);
       }

@@ -315,12 +315,14 @@ async function handlePokeCron() {
     }
   }
 
-  // Schedule deferred triggers for upcoming jobs at their nextRunAtMs.
-  // These timers use the fresh monotonic clock (created post-resume),
-  // so they fire at the correct wall-clock time. Uses mode "due" so
-  // if OpenClaw's own stale timer fires first, the deferred call is a no-op.
+  // Schedule deferred triggers for upcoming jobs. Fire 15s AFTER the
+  // scheduled cron time — this gives OpenClaw's own stale timer a
+  // chance to handle it naturally. Our cron.run(due) acts as the
+  // safety net: if OpenClaw already ran the job, "due" returns
+  // not-due (no-op); if it didn't, we catch it.
+  const POKE_DELAY_MS = 5_000;
   for (const job of upcoming) {
-    const delay = job.state.nextRunAtMs - now;
+    const delay = job.state.nextRunAtMs - now + POKE_DELAY_MS;
     console.log(
       `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
     );

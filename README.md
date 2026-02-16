@@ -225,7 +225,7 @@ total latency).
 
 **Cron-aware scheduling** — Before suspending, the scheduler queries the guest
 agent for cron job schedules and computes the next required wake time. A timer
-resumes the VM ahead of the next scheduled job (`cronWakeAheadMs`, default 15s).
+resumes the VM ahead of the next scheduled job (`cronWakeAheadMs`, default 30s).
 
 Manual suspend and resume are also available via `lobsterd suspend <name>` and
 `lobsterd resume <name>`. The watchdog automatically detects externally-suspended
