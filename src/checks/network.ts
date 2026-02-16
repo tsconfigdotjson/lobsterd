@@ -1,8 +1,10 @@
 import { okAsync, ResultAsync } from "neverthrow";
 import * as caddy from "../system/caddy.js";
 import { execUnchecked } from "../system/exec.js";
+import * as vsock from "../system/vsock.js";
 import type {
   HealthCheckResult,
+  LobsterdConfig,
   LobsterError,
   Tenant,
 } from "../types/index.js";
@@ -36,35 +38,41 @@ export function checkTapDevice(
 
 export function checkGatewayPort(
   tenant: Tenant,
+  config: LobsterdConfig,
 ): ResultAsync<HealthCheckResult, LobsterError> {
-  return ResultAsync.fromSafePromise(
-    (async (): Promise<HealthCheckResult> => {
-      try {
-        const _socket = await Bun.connect({
-          hostname: tenant.ipAddress,
-          port: 9000,
-          socket: {
-            data() {},
-            open(socket) {
-              socket.end();
+  if (tenant.status === "suspended") {
+    return okAsync({
+      check: "net.gateway",
+      status: "ok",
+      message: "Skipped — tenant is suspended",
+    } as HealthCheckResult);
+  }
+  // Check via the agent's get-stats (which reports gatewayPid) instead of
+  // opening a TCP connection to port 9000 from the host — that connection
+  // gets counted as an active client by the idle-detection poller.
+  return vsock
+    .getStats(tenant.ipAddress, config.vsock.agentPort, tenant.agentToken)
+    .map(
+      (stats): HealthCheckResult =>
+        stats.gatewayPid
+          ? {
+              check: "net.gateway",
+              status: "ok",
+              message: `Gateway running (PID ${stats.gatewayPid})`,
+            }
+          : {
+              check: "net.gateway",
+              status: "failed",
+              message: "Gateway process is not running",
             },
-            error() {},
-          },
-        });
-        return {
-          check: "net.gateway",
-          status: "ok",
-          message: `Gateway on ${tenant.ipAddress}:9000 is reachable`,
-        };
-      } catch {
-        return {
-          check: "net.gateway",
-          status: "failed",
-          message: `Gateway on ${tenant.ipAddress}:9000 is not reachable`,
-        };
-      }
-    })(),
-  );
+    )
+    .orElse(() =>
+      okAsync<HealthCheckResult, LobsterError>({
+        check: "net.gateway",
+        status: "failed",
+        message: "Failed to query agent for gateway status",
+      }),
+    );
 }
 
 export function checkCaddyRoute(
@@ -74,10 +82,11 @@ export function checkCaddyRoute(
   return caddy
     .listRoutes(adminApi)
     .map((routes): HealthCheckResult => {
-      const found = routes.some(
-        (r) =>
-          (r as Record<string, unknown>)?.["@id"] === `lobster-${tenant.name}`,
-      );
+      const id = (r: unknown) =>
+        (r as Record<string, unknown>)?.["@id"] as string | undefined;
+      const found =
+        routes.some((r) => id(r) === `lobster-${tenant.name}`) &&
+        routes.some((r) => id(r) === `lobster-${tenant.name}-ws`);
       return found
         ? {
             check: "net.caddy-route",
@@ -102,10 +111,11 @@ export function checkCaddyRoute(
 export function runNetworkChecks(
   tenant: Tenant,
   adminApi: string,
+  config: LobsterdConfig,
 ): ResultAsync<HealthCheckResult[], LobsterError> {
   return ResultAsync.combine([
     checkTapDevice(tenant),
-    checkGatewayPort(tenant),
+    checkGatewayPort(tenant, config),
     checkCaddyRoute(tenant, adminApi),
   ]);
 }

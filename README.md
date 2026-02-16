@@ -26,6 +26,7 @@ This creates:
 - `/etc/lobsterd/config.json` -- main configuration
 - `/etc/lobsterd/registry.json` -- tenant registry
 - `/var/lib/lobsterd/overlays/` -- per-tenant overlay images
+- `/var/lib/lobsterd/snapshots/` -- suspend/resume VM snapshots
 - `/var/lib/lobsterd/sockets/` -- Firecracker API sockets
 
 ## Usage
@@ -60,6 +61,12 @@ sudo lobsterd tank --json
 
 # Print gateway token for a tenant
 sudo lobsterd token <name>
+
+# Suspend a tenant VM to disk (zero RAM while suspended)
+sudo lobsterd suspend <name>
+
+# Resume a suspended tenant from snapshot
+sudo lobsterd resume <name>
 
 # Stream tenant logs
 sudo lobsterd logs <name>
@@ -198,6 +205,32 @@ listens only on the tenant's guest IP (not `0.0.0.0`), and the keypair is
 removed on `evict`. The `lobsterd exec` command wraps SSH with the correct key
 and options.
 
+### Suspend / resume
+
+Idle VMs can be suspended to disk via Firecracker's snapshot/restore API,
+freeing all RAM while preserving full VM state. Resume restores the VM from
+snapshot in ~3 seconds, transparently to connected clients.
+
+**Idle detection** — The watchdog scheduler polls each tenant's guest agent for
+active connections (both inbound and outbound). When a tenant has zero
+connections and no running cron jobs for longer than `idleThresholdMs` (default
+10 seconds), it is automatically suspended.
+
+**Wake-on-request** — While a VM is suspended, a lightweight TCP sentinel binds
+the guest IP on the host loopback and listens on the gateway port. When Caddy's
+reverse proxy retries a request and hits the sentinel, the scheduler triggers an
+automatic resume. Caddy's `try_duration: 30s` keeps the client request in-flight
+while the VM starts, so the first request completes normally (typically ~5s
+total latency).
+
+**Cron-aware scheduling** — Before suspending, the scheduler queries the guest
+agent for cron job schedules and computes the next required wake time. A timer
+resumes the VM ahead of the next scheduled job (`cronWakeAheadMs`, default 30s).
+
+Manual suspend and resume are also available via `lobsterd suspend <name>` and
+`lobsterd resume <name>`. The watchdog automatically detects externally-suspended
+tenants and starts sentinels for them.
+
 ### TLS termination
 
 Caddy terminates TLS for all tenant routes using ACME or bundled Cloudflare
@@ -213,13 +246,13 @@ tuning).
 ```
 src/
   index.tsx           CLI entry point (commander)
-  commands/           init, spawn, evict, exec, molt, snap, watch, tank, logs
+  commands/           init, spawn, evict, exec, suspend, resume, molt, snap, watch, tank, logs
   reef/               REST API server (Hono + OpenAPI)
   system/             firecracker API, networking, caddy, overlay images, agent TCP, SSH keypairs
   config/             zod schemas, defaults, JSON loader with file locking
   checks/             VM and network health checks
   repair/             VM and network repair logic
-  watchdog/           background monitoring loop and state machine
+  watchdog/           background monitoring loop, state machine, and suspend scheduler
   ui/                 React/Ink TUI components
 guest/
   build-rootfs.sh     Alpine rootfs builder

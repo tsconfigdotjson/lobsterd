@@ -66,6 +66,9 @@ export const watchdogConfigSchema = z.object({
   intervalMs: z.number().int().min(1000),
   maxRepairAttempts: z.number().int().min(1),
   repairCooldownMs: z.number().int().min(0),
+  idleThresholdMs: z.number().int().min(0),
+  cronWakeAheadMs: z.number().int().min(0),
+  trafficPollMs: z.number().int().min(1000),
 });
 
 export const openclawConfigSchema = z.object({
@@ -92,6 +95,31 @@ export const lobsterdConfigSchema = z.object({
   buoy: buoyConfigSchema.optional(),
 });
 
+export const cronScheduleInfoSchema = z.object({
+  id: z.string().min(1),
+  name: z.string().min(1),
+  nextRunAtMs: z.number().int().min(0),
+  schedule: z
+    .object({
+      kind: z.enum(["cron", "every", "at"]),
+      expr: z.string().optional(),
+      tz: z.string().optional(),
+      everyMs: z.number().optional(),
+      anchorMs: z.number().optional(),
+      at: z.string().optional(),
+    })
+    .nullable()
+    .optional(),
+});
+
+export const suspendInfoSchema = z.object({
+  suspendedAt: z.string().datetime(),
+  snapshotDir: z.string().min(1),
+  cronSchedules: z.array(cronScheduleInfoSchema),
+  nextWakeAtMs: z.number().int().nullable(),
+  lastRxBytes: z.number().int().min(0),
+});
+
 export const tenantSchema = z.object({
   name: z
     .string()
@@ -115,6 +143,7 @@ export const tenantSchema = z.object({
   gatewayToken: z.string().min(1),
   jailUid: z.number().int().min(1000),
   agentToken: z.string().min(1),
+  suspendInfo: suspendInfoSchema.nullable(),
 });
 
 export const tenantRegistrySchema = z.object({

@@ -2,6 +2,30 @@
 
 export type TenantStatus = "active" | "suspended" | "removing";
 
+export interface CronSchedule {
+  kind: "cron" | "every" | "at";
+  expr?: string;
+  tz?: string;
+  everyMs?: number;
+  anchorMs?: number;
+  at?: string;
+}
+
+export interface CronScheduleInfo {
+  id: string;
+  name: string;
+  nextRunAtMs: number;
+  schedule?: CronSchedule | null;
+}
+
+export interface SuspendInfo {
+  suspendedAt: string;
+  snapshotDir: string;
+  cronSchedules: CronScheduleInfo[];
+  nextWakeAtMs: number | null;
+  lastRxBytes: number;
+}
+
 export interface Tenant {
   name: string;
   vmId: string;
@@ -18,6 +42,7 @@ export interface Tenant {
   gatewayToken: string;
   jailUid: number;
   agentToken: string;
+  suspendInfo: SuspendInfo | null;
 }
 
 // ── Health ───────────────────────────────────────────────────────────────────
@@ -43,7 +68,8 @@ export type WatchState =
   | "HEALTHY"
   | "DEGRADED"
   | "FAILED"
-  | "RECOVERING";
+  | "RECOVERING"
+  | "SUSPENDED";
 
 export interface TenantWatchState {
   state: WatchState;
@@ -121,6 +147,9 @@ export interface WatchdogConfig {
   intervalMs: number;
   maxRepairAttempts: number;
   repairCooldownMs: number;
+  idleThresholdMs: number;
+  cronWakeAheadMs: number;
+  trafficPollMs: number;
 }
 
 export interface OpenclawDefaultConfig {
@@ -168,6 +197,7 @@ export interface LobsterdConfig {
 export interface GuestStats {
   gatewayPid: number | null;
   memoryKb: number;
+  activeConnections: number;
 }
 
 // ── Registry ─────────────────────────────────────────────────────────────────
@@ -210,6 +240,11 @@ export type ErrorCode =
   | "VALIDATION_FAILED"
   | "LOCK_FAILED"
   | "BUOY_ALREADY_RUNNING"
+  | "SNAPSHOT_FAILED"
+  | "SUSPEND_FAILED"
+  | "SUSPEND_SKIPPED"
+  | "RESUME_FAILED"
+  | "UNINIT_FAILED"
   | "UNKNOWN";
 
 export interface LobsterError {
@@ -229,4 +264,16 @@ export interface WatchdogEvents {
     timestamp: string;
     states: Record<string, TenantWatchState>;
   };
+  "scheduler-poll": {
+    tenant: string;
+    connections: number;
+    idleFor: number | null;
+  };
+  "suspend-start": { tenant: string };
+  "suspend-complete": { tenant: string; nextWakeAtMs: number | null };
+  "suspend-failed": { tenant: string; error: string };
+  "suspend-skipped": { tenant: string; reason: string };
+  "resume-start": { tenant: string; trigger: "traffic" | "cron" | "manual" };
+  "resume-complete": { tenant: string; vmPid: number | null };
+  "resume-failed": { tenant: string; error: string };
 }

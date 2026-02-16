@@ -4,6 +4,7 @@ import { loadConfig, loadRegistry } from "../config/loader.js";
 import type { Tenant, TenantWatchState } from "../types/index.js";
 import { Dashboard } from "../ui/Dashboard.js";
 import { startWatchdog } from "../watchdog/loop.js";
+import { startScheduler } from "../watchdog/scheduler.js";
 
 function WatchApp({
   tenants,
@@ -61,6 +62,12 @@ export async function runWatch(
   }
 
   const handle = startWatchdog(config, registry);
+  const scheduler = startScheduler(
+    config,
+    registry,
+    handle.emitter,
+    handle.states,
+  );
 
   if (opts.daemon) {
     // Daemon mode: log to console instead of TUI
@@ -85,13 +92,68 @@ export async function runWatch(
       console.log(`[${data.timestamp}] tick: ${states}`);
     });
 
+    handle.emitter.on("scheduler-poll", (data) => {
+      const idle =
+        data.idleFor !== null
+          ? ` idle=${(data.idleFor / 1000).toFixed(1)}s`
+          : "";
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: conn=${data.connections}${idle}`,
+      );
+    });
+
+    handle.emitter.on("suspend-start", (data) => {
+      console.log(`[${new Date().toISOString()}] ${data.tenant}: suspending`);
+    });
+
+    handle.emitter.on("suspend-complete", (data) => {
+      const wake = data.nextWakeAtMs
+        ? ` (next wake: ${new Date(data.nextWakeAtMs).toISOString()})`
+        : "";
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: suspended${wake}`,
+      );
+    });
+
+    handle.emitter.on("suspend-failed", (data) => {
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: suspend failed: ${data.error}`,
+      );
+    });
+
+    handle.emitter.on("suspend-skipped", (data) => {
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: suspend skipped: ${data.reason}`,
+      );
+    });
+
+    handle.emitter.on("resume-start", (data) => {
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: resuming (trigger: ${data.trigger})`,
+      );
+    });
+
+    handle.emitter.on("resume-complete", (data) => {
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: resumed (PID ${data.vmPid})`,
+      );
+    });
+
+    handle.emitter.on("resume-failed", (data) => {
+      console.log(
+        `[${new Date().toISOString()}] ${data.tenant}: resume failed: ${data.error}`,
+      );
+    });
+
     // Keep alive
     await new Promise<void>((resolve) => {
       process.on("SIGINT", () => {
+        scheduler.stop();
         handle.stop();
         resolve();
       });
       process.on("SIGTERM", () => {
+        scheduler.stop();
         handle.stop();
         resolve();
       });
@@ -105,6 +167,7 @@ export async function runWatch(
   );
 
   await waitUntilExit();
+  scheduler.stop();
   handle.stop();
   return 0;
 }

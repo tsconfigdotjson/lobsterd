@@ -13,6 +13,7 @@ export const OVERLAYS_DIR = `${LOBSTERD_BASE}/overlays`;
 export const SOCKETS_DIR = `${LOBSTERD_BASE}/sockets`;
 export const KERNELS_DIR = `${LOBSTERD_BASE}/kernels`;
 export const JAILER_BASE = `${LOBSTERD_BASE}/jailer`;
+export const SNAPSHOTS_DIR = `${LOBSTERD_BASE}/snapshots`;
 export const CERTS_DIR = `${CONFIG_DIR}/certs`;
 export const ORIGIN_CERT_PATH = `${CERTS_DIR}/origin.pem`;
 export const ORIGIN_KEY_PATH = `${CERTS_DIR}/origin-key.pem`;
@@ -67,9 +68,12 @@ export const DEFAULT_CONFIG: LobsterdConfig = {
     snapshotRetention: 7,
   },
   watchdog: {
-    intervalMs: 30_000,
+    intervalMs: 10_000,
     maxRepairAttempts: 3,
     repairCooldownMs: 60_000,
+    idleThresholdMs: 10_000,
+    cronWakeAheadMs: 30_000,
+    trafficPollMs: 5_000,
   },
   openclaw: {
     installPath: "/opt/openclaw",

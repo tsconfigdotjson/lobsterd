@@ -1,4 +1,5 @@
 import { runAllChecks } from "../checks/index.js";
+import { loadRegistry } from "../config/loader.js";
 import { runRepairs } from "../repair/index.js";
 import type {
   LobsterdConfig,
@@ -35,11 +36,43 @@ export function startWatchdog(
     tickInProgress = true;
 
     try {
+      // Reload registry from disk so out-of-band CLI commands
+      // (manual suspend/resume/evict) are picked up immediately
+      const freshResult = await loadRegistry();
+      if (freshResult.isOk()) {
+        const fresh = freshResult.value;
+        for (const freshTenant of fresh.tenants) {
+          const idx = registry.tenants.findIndex(
+            (t) => t.name === freshTenant.name,
+          );
+          if (idx !== -1) {
+            Object.assign(registry.tenants[idx], freshTenant);
+          }
+        }
+      }
+
       for (const tenant of registry.tenants) {
         if (!running) {
           break;
         }
-        if (tenant.status !== "active") {
+        if (tenant.status === "removing") {
+          continue;
+        }
+        if (tenant.status === "suspended") {
+          const oldState = (tenantStates[tenant.name] ?? initialWatchState())
+            .state;
+          if (oldState !== "SUSPENDED") {
+            tenantStates[tenant.name] = {
+              ...initialWatchState(),
+              state: "SUSPENDED",
+              lastCheck: new Date().toISOString(),
+            };
+            emitter.emit("state-change", {
+              tenant: tenant.name,
+              from: oldState,
+              to: "SUSPENDED",
+            });
+          }
           continue;
         }
 
@@ -82,10 +115,34 @@ export function startWatchdog(
         }
 
         if (needsRepair) {
+          // Re-check in-memory status — the scheduler may have marked
+          // the tenant suspended after health checks started
+          if (tenant.status !== "active") {
+            continue;
+          }
+
+          // Re-check on-disk status before repairing — a manual suspend/resume
+          // may have started after the tick began, making repairs dangerous
+          const preRepairCheck = await loadRegistry();
+          if (preRepairCheck.isOk()) {
+            const diskTenant = preRepairCheck.value.tenants.find(
+              (t) => t.name === tenant.name,
+            );
+            if (diskTenant && diskTenant.status !== "active") {
+              Object.assign(tenant, diskTenant);
+              continue;
+            }
+          }
+
           const failed = checkResults.filter((c) => c.status !== "ok");
           emitter.emit("repair-start", { tenant: tenant.name, checks: failed });
 
-          const repairResult = await runRepairs(tenant, failed, config);
+          const repairResult = await runRepairs(
+            tenant,
+            failed,
+            config,
+            registry,
+          );
           if (repairResult.isOk()) {
             emitter.emit("repair-complete", {
               tenant: tenant.name,

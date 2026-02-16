@@ -4,7 +4,7 @@
 // Listens on TCP for host commands: inject-secrets, health-ping, launch-openclaw, shutdown
 // Authenticated via agent_token passed in kernel command line.
 
-import { spawn } from "node:child_process";
+import { execSync, spawn } from "node:child_process";
 import { timingSafeEqual } from "node:crypto";
 import {
   chmodSync,
@@ -83,8 +83,10 @@ function startAgent() {
             conn.end(`${JSON.stringify({ error: "unauthorized" })}\n`);
             return;
           }
-          const response = handleMessage(msg);
-          conn.end(`${response}\n`);
+          handleMessage(msg).then(
+            (response) => conn.end(`${response}\n`),
+            (e) => conn.end(`${JSON.stringify({ error: e.message })}\n`),
+          );
         } catch (e) {
           conn.end(`${JSON.stringify({ error: e.message })}\n`);
         }
@@ -98,8 +100,10 @@ function startAgent() {
             conn.end(`${JSON.stringify({ error: "unauthorized" })}\n`);
             return;
           }
-          const response = handleMessage(msg);
-          conn.end(`${response}\n`);
+          handleMessage(msg).then(
+            (response) => conn.end(`${response}\n`),
+            (e) => conn.end(`${JSON.stringify({ error: e.message })}\n`),
+          );
         } catch (e) {
           conn.end(`${JSON.stringify({ error: e.message })}\n`);
         }
@@ -144,7 +148,7 @@ function startAgent() {
   });
 }
 
-function handleMessage(msg) {
+async function handleMessage(msg) {
   switch (msg.type) {
     case "inject-secrets":
       return handleInjectSecrets(msg.secrets);
@@ -160,10 +164,36 @@ function handleMessage(msg) {
       } catch {
         return "No logs available";
       }
+    case "set-time":
+      return handleSetTime(msg.timestampMs);
+    case "get-cron-schedules":
+      return await handleGetCronSchedules();
+    case "poke-cron":
+      return await handlePokeCron();
+    case "ensure-gateway":
+      return handleLaunchOpenclaw();
+    case "get-active-connections":
+      return handleGetActiveConnections();
     case "shutdown":
       return handleShutdown();
     default:
       return JSON.stringify({ error: `Unknown message type: ${msg.type}` });
+  }
+}
+
+function handleSetTime(timestampMs) {
+  if (typeof timestampMs !== "number" || timestampMs <= 0) {
+    return JSON.stringify({ error: "Invalid timestampMs" });
+  }
+  try {
+    const epochSeconds = Math.floor(timestampMs / 1000);
+    execSync(`date -s @${epochSeconds}`, { stdio: "pipe" });
+    console.log(
+      `[lobster-agent] Clock set to ${new Date(timestampMs).toISOString()}`,
+    );
+    return JSON.stringify({ ok: true });
+  } catch (e) {
+    return JSON.stringify({ error: `Failed to set time: ${e.message}` });
   }
 }
 
@@ -241,6 +271,180 @@ function handleLaunchOpenclaw() {
   return JSON.stringify({ status: "launched", pid: gatewayProcess.pid });
 }
 
+async function handlePokeCron() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (!token || !gatewayProcess) {
+    return JSON.stringify({ error: "Gateway not running" });
+  }
+
+  // Read jobs.json to find enabled jobs with their nextRunAtMs
+  let jobs = [];
+  try {
+    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
+    const data = JSON.parse(raw);
+    if (data.version === 1 && Array.isArray(data.jobs)) {
+      jobs = data.jobs.filter(
+        (j) =>
+          j.enabled !== false &&
+          j.state &&
+          typeof j.state.nextRunAtMs === "number",
+      );
+    }
+  } catch {
+    return JSON.stringify({ error: "No cron jobs found" });
+  }
+
+  if (jobs.length === 0) {
+    return JSON.stringify({ ok: true, triggered: 0, deferred: 0 });
+  }
+
+  const now = Date.now();
+  const overdue = jobs.filter((j) => now >= j.state.nextRunAtMs);
+  const upcoming = jobs.filter((j) => now < j.state.nextRunAtMs);
+
+  // Execute overdue jobs immediately (no mode = defaults to "force")
+  let triggered = 0;
+  if (overdue.length > 0) {
+    try {
+      triggered = await runCronJobs(
+        token,
+        overdue.map((j) => j.id),
+      );
+    } catch (e) {
+      console.log(`[lobster-agent] Poke cron (overdue) failed: ${e.message}`);
+    }
+  }
+
+  // Schedule deferred triggers for upcoming jobs. Fire 15s AFTER the
+  // scheduled cron time — this gives OpenClaw's own stale timer a
+  // chance to handle it naturally. Our cron.run(due) acts as the
+  // safety net: if OpenClaw already ran the job, "due" returns
+  // not-due (no-op); if it didn't, we catch it.
+  const POKE_DELAY_MS = 5_000;
+  for (const job of upcoming) {
+    const delay = job.state.nextRunAtMs - now + POKE_DELAY_MS;
+    console.log(
+      `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
+    );
+    setTimeout(async () => {
+      try {
+        await runCronJobs(token, [job.id], "due");
+      } catch (e) {
+        console.log(
+          `[lobster-agent] Deferred cron trigger for ${job.id} failed: ${e.message}`,
+        );
+      }
+    }, delay);
+  }
+
+  return JSON.stringify({ ok: true, triggered, deferred: upcoming.length });
+}
+
+/** Connect to gateway WebSocket and call cron.run for each job ID */
+function runCronJobs(token, jobIds, mode) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn(val);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      settle(reject, new Error("timeout"));
+      try {
+        ws.close();
+      } catch {}
+    }, 10000);
+
+    const ws = new WebSocket("ws://127.0.0.1:9000");
+    let nextId = 1;
+    let triggered = 0;
+    let pendingJobIdx = 0;
+
+    function sendNextJobOrFinish() {
+      if (pendingJobIdx >= jobIds.length) {
+        ws.close();
+        settle(resolve, triggered);
+        return;
+      }
+      const id = String(nextId++);
+      const params = { jobId: jobIds[pendingJobIdx] };
+      if (mode) {
+        params.mode = mode;
+      }
+      ws.send(JSON.stringify({ type: "req", id, method: "cron.run", params }));
+      pendingJobIdx++;
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        // Step 1: Server sends connect challenge → authenticate
+        if (msg.type === "event" && msg.event === "connect.challenge") {
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "connect",
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: "lobster-agent",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role: "operator",
+                scopes: ["operator.read", "operator.write"],
+                auth: { token },
+              },
+            }),
+          );
+          return;
+        }
+
+        // Step 2: Connect response → start sending cron.run requests
+        if (msg.type === "res" && msg.id === "1") {
+          if (!msg.ok) {
+            ws.close();
+            settle(reject, new Error("connect rejected"));
+            return;
+          }
+          sendNextJobOrFinish();
+          return;
+        }
+
+        // Step 3+: cron.run responses → send next or finish
+        if (msg.type === "res") {
+          if (msg.ok) {
+            triggered++;
+          }
+          sendNextJobOrFinish();
+        }
+      } catch (e) {
+        try {
+          ws.close();
+        } catch {}
+        settle(reject, e);
+      }
+    };
+
+    ws.onerror = () => {
+      settle(reject, new Error("WebSocket connection failed"));
+    };
+
+    ws.onclose = () => {
+      settle(reject, new Error("WebSocket closed before completion"));
+    };
+  });
+}
+
 function handleGetStats() {
   if (!gatewayProcess || !gatewayProcess.pid) {
     return JSON.stringify({ gatewayPid: null, memoryKb: 0 });
@@ -252,6 +456,188 @@ function handleGetStats() {
     return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb });
   } catch {
     return JSON.stringify({ gatewayPid: gatewayProcess.pid, memoryKb: 0 });
+  }
+}
+
+async function handleGetCronSchedules() {
+  // Poke the gateway via cron.list RPC to trigger recomputeNextRuns(),
+  // which persists fresh nextRunAtMs values to jobs.json
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (token && gatewayProcess) {
+    try {
+      await refreshCronViaGateway(token);
+    } catch (e) {
+      console.log(`[lobster-agent] Gateway cron refresh failed: ${e.message}`);
+    }
+  }
+
+  // Read the (now-fresh) file
+  try {
+    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
+    const data = JSON.parse(raw);
+    if (data.version !== 1 || !Array.isArray(data.jobs)) {
+      return JSON.stringify({ schedules: [] });
+    }
+    const schedules = data.jobs
+      .filter((j) => j.enabled !== false && j.state && j.state.nextRunAtMs > 0)
+      .map((j) => ({
+        id: j.id,
+        name: j.name || j.id,
+        nextRunAtMs: j.state.nextRunAtMs,
+        schedule: j.schedule || null,
+      }));
+    return JSON.stringify({ schedules });
+  } catch {
+    return JSON.stringify({ schedules: [] });
+  }
+}
+
+function refreshCronViaGateway(token) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn(val);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      settle(reject, new Error("timeout"));
+      try {
+        ws.close();
+      } catch {}
+    }, 5000);
+
+    const ws = new WebSocket("ws://127.0.0.1:9000");
+    let nextId = 1;
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        // Step 1: Server sends connect challenge → send connect request
+        if (msg.type === "event" && msg.event === "connect.challenge") {
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "connect",
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: "lobster-agent",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role: "operator",
+                scopes: ["operator.read"],
+                auth: { token },
+              },
+            }),
+          );
+          return;
+        }
+
+        // Step 2: Connect response → send cron.list
+        if (msg.type === "res" && msg.id === "1") {
+          if (!msg.ok) {
+            ws.close();
+            settle(reject, new Error("connect rejected"));
+            return;
+          }
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "cron.list",
+              params: {},
+            }),
+          );
+          return;
+        }
+
+        // Step 3: cron.list response → done, file is now fresh
+        if (msg.type === "res" && msg.id === "2") {
+          ws.close();
+          if (!msg.ok) {
+            settle(reject, new Error("cron.list failed"));
+            return;
+          }
+          settle(resolve, undefined);
+        }
+      } catch (e) {
+        try {
+          ws.close();
+        } catch {}
+        settle(reject, e);
+      }
+    };
+
+    ws.onerror = () => {
+      settle(reject, new Error("WebSocket connection failed"));
+    };
+
+    ws.onclose = () => {
+      settle(reject, new Error("WebSocket closed before completion"));
+    };
+  });
+}
+
+function handleGetActiveConnections() {
+  try {
+    const tcp = readFileSync("/proc/net/tcp", "utf-8");
+    const lines = tcp.trim().split("\n").slice(1); // skip header
+    let count = 0;
+    const GATEWAY_PORT = 0x2328; // 9000
+    for (const line of lines) {
+      const parts = line.trim().split(/\s+/);
+      if (parts.length < 4) {
+        continue;
+      }
+      const localAddr = parts[1]; // hex ip:port
+      const state = parts[3]; // connection state
+      // state 01 = ESTABLISHED
+      if (state !== "01") {
+        continue;
+      }
+      // Only count inbound connections on the gateway port (9000).
+      // This ignores outbound API calls, SSH, agent ports, and internal traffic.
+      const localPort = parseInt(localAddr.split(":")[1], 16);
+      if (localPort === GATEWAY_PORT) {
+        count++;
+      }
+    }
+
+    // Also check for running cron jobs — if any job has runningAtMs set,
+    // the gateway is actively executing work even without inbound connections.
+    try {
+      const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
+      const data = JSON.parse(raw);
+      if (data.version === 1 && Array.isArray(data.jobs)) {
+        const running = data.jobs.some(
+          (j) =>
+            j.enabled !== false &&
+            j.state &&
+            typeof j.state.runningAtMs === "number" &&
+            j.state.runningAtMs > 0,
+        );
+        if (running) {
+          count++;
+        }
+      }
+    } catch {
+      // No cron jobs file — ignore
+    }
+
+    return JSON.stringify({ activeConnections: count });
+  } catch {
+    return JSON.stringify({ activeConnections: 0 });
   }
 }
 

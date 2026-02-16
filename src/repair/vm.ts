@@ -1,4 +1,6 @@
 import { okAsync, ResultAsync } from "neverthrow";
+import { saveRegistry } from "../config/loader.js";
+import { execUnchecked } from "../system/exec.js";
 import * as fc from "../system/firecracker.js";
 import * as jailer from "../system/jailer.js";
 import * as vsock from "../system/vsock.js";
@@ -7,23 +9,29 @@ import type {
   LobsterError,
   RepairResult,
   Tenant,
+  TenantRegistry,
 } from "../types/index.js";
 
 export function repairVmProcess(
   tenant: Tenant,
   config: LobsterdConfig,
+  registry: TenantRegistry,
 ): ResultAsync<RepairResult, LobsterError> {
   const actions: string[] = [];
 
-  // Kill stale process if any
+  // Kill ALL firecracker processes for this vmId (not just the recorded PID)
+  // to prevent zombie processes from previous repair cycles hijacking the API socket
   return ResultAsync.fromSafePromise(
     (async () => {
       if (tenant.vmPid) {
         try {
           process.kill(tenant.vmPid, "SIGKILL");
         } catch {}
-        actions.push(`Killed stale VM process ${tenant.vmPid}`);
+        actions.push(`Killed recorded VM process ${tenant.vmPid}`);
       }
+      // Also kill any orphaned firecracker processes for the same VM ID
+      await execUnchecked(["pkill", "-9", "-f", `--id ${tenant.vmId}`]);
+      await Bun.sleep(200);
     })(),
   )
     .andThen(() =>
@@ -132,13 +140,17 @@ export function repairVmProcess(
         tenant.agentToken,
       );
     })
-    .map(
-      (): RepairResult => ({
-        repair: "vm.process",
-        fixed: true,
-        actions,
-      }),
-    )
+    .andThen(() => {
+      actions.push("Secrets injected");
+      // Persist updated vmPid to disk so subsequent ticks don't see stale state
+      return saveRegistry(registry).map(
+        (): RepairResult => ({
+          repair: "vm.process",
+          fixed: true,
+          actions: [...actions, "Registry saved"],
+        }),
+      );
+    })
     .orElse(() =>
       okAsync<RepairResult, LobsterError>({
         repair: "vm.process",
@@ -153,26 +165,19 @@ export function repairVmResponsive(
   config: LobsterdConfig,
 ): ResultAsync<RepairResult, LobsterError> {
   return vsock
-    .injectSecrets(
-      tenant.ipAddress,
-      config.vsock.agentPort,
-      {
-        OPENCLAW_GATEWAY_TOKEN: tenant.gatewayToken,
-      },
-      tenant.agentToken,
-    )
+    .ensureGateway(tenant.ipAddress, config.vsock.agentPort, tenant.agentToken)
     .map(
       (): RepairResult => ({
         repair: "vm.responsive",
         fixed: true,
-        actions: ["Re-injected gateway token via TCP"],
+        actions: ["Ensured gateway is running"],
       }),
     )
     .orElse(() =>
       okAsync<RepairResult, LobsterError>({
         repair: "vm.responsive",
         fixed: false,
-        actions: ["Failed to re-inject secrets — VM may need full restart"],
+        actions: ["Failed to ensure gateway — VM may need full restart"],
       }),
     );
 }

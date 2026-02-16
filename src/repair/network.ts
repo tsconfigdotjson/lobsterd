@@ -42,12 +42,15 @@ export function repairCaddyRoute(
   config: LobsterdConfig,
 ): ResultAsync<RepairResult, LobsterError> {
   return caddy
-    .addRoute(
-      config.caddy.adminApi,
-      tenant.name,
-      config.caddy.domain,
-      tenant.ipAddress,
-      9000,
+    .removeRoute(config.caddy.adminApi, tenant.name)
+    .andThen(() =>
+      caddy.addRoute(
+        config.caddy.adminApi,
+        tenant.name,
+        config.caddy.domain,
+        tenant.ipAddress,
+        9000,
+      ),
     )
     .map(
       (): RepairResult => ({
