@@ -8,6 +8,7 @@ import * as jailer from "../system/jailer.js";
 import * as vsock from "../system/vsock.js";
 import type {
   CronScheduleInfo,
+  HeartbeatScheduleInfo,
   LobsterError,
   SuspendInfo,
   Tenant,
@@ -49,6 +50,7 @@ export function runSuspend(
   let tenant: Tenant;
   let registry: TenantRegistry;
   let cronSchedules: CronScheduleInfo[] = [];
+  let heartbeatSchedule: HeartbeatScheduleInfo | null = null;
   let snapshotDir: string;
 
   return loadConfig().andThen((config) =>
@@ -87,17 +89,44 @@ export function runSuspend(
           })
           .orElse(() => okAsync(undefined));
       })
+      .andThen(() => {
+        // Step 1a: Fetch heartbeat schedule (soft-fail)
+        progress("heartbeat", "Fetching heartbeat schedule from guest agent");
+        return vsock
+          .getHeartbeatSchedule(
+            tenant.ipAddress,
+            config.vsock.agentPort,
+            tenant.agentToken,
+          )
+          .map((hb) => {
+            heartbeatSchedule = hb;
+            return undefined;
+          })
+          .orElse(() => okAsync(undefined));
+      })
       .andThen((): ResultAsync<void, LobsterError> => {
         // Step 1b: Early bail if next wake would be in the past
         const now = Date.now();
+        const candidates: number[] = [];
+
         const futureRuns = computeFutureRunTimes(cronSchedules, now);
         if (futureRuns.length > 0) {
-          const earliest = Math.min(...futureRuns);
+          candidates.push(Math.min(...futureRuns));
+        }
+        if (
+          heartbeatSchedule?.enabled &&
+          heartbeatSchedule.nextBeatAtMs > now
+        ) {
+          candidates.push(heartbeatSchedule.nextBeatAtMs);
+        }
+
+        if (candidates.length > 0) {
+          const earliest = Math.min(...candidates);
           const nextWakeAtMs = earliest - config.watchdog.cronWakeAheadMs;
           if (nextWakeAtMs <= now) {
             return errAsync({
               code: "SUSPEND_SKIPPED",
-              message: `Next cron wake is ${Math.round((earliest - now) / 1000)}s away (within ${config.watchdog.cronWakeAheadMs / 1000}s wake-ahead window), skipping suspend`,
+              message: `Next wake is ${Math.round((earliest - now) / 1000)}s away (within ${config.watchdog.cronWakeAheadMs / 1000}s wake-ahead window), skipping suspend`,
             });
           }
         }
@@ -167,14 +196,28 @@ export function runSuspend(
         // so the baseline includes trailing TCP teardown / ARP chatter
         const lastRxBytes = readTapRxBytes(tenant.tapDev);
 
-        // Step 9: Compute next wake time from cron schedules
+        // Step 9: Compute next wake time from cron + heartbeat schedules
         // (Step 1b already validated that this won't be in the past)
         const now = Date.now();
         let nextWakeAtMs: number | null = null;
+        const wakeCandidates: number[] = [];
+
         const futureRuns = computeFutureRunTimes(cronSchedules, now);
         if (futureRuns.length > 0) {
-          const earliest = Math.min(...futureRuns);
-          nextWakeAtMs = earliest - config.watchdog.cronWakeAheadMs;
+          wakeCandidates.push(
+            Math.min(...futureRuns) - config.watchdog.cronWakeAheadMs,
+          );
+        }
+        if (
+          heartbeatSchedule?.enabled &&
+          heartbeatSchedule.nextBeatAtMs > now
+        ) {
+          wakeCandidates.push(
+            heartbeatSchedule.nextBeatAtMs - config.watchdog.cronWakeAheadMs,
+          );
+        }
+        if (wakeCandidates.length > 0) {
+          nextWakeAtMs = Math.min(...wakeCandidates);
         }
 
         // Step 10: Update registry
@@ -185,6 +228,7 @@ export function runSuspend(
           cronSchedules,
           nextWakeAtMs,
           lastRxBytes,
+          heartbeatSchedule,
         };
         tenant.status = "suspended";
         tenant.vmPid = null;

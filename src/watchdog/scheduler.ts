@@ -181,8 +181,22 @@ export function startScheduler(
             )
             .orElse(() => okAsync(undefined));
         }
-        // Give the cron job time to start executing (runningAtMs in jobs.json
-        // counts as an active connection and prevents re-suspend).
+        // Also poke heartbeat — writes marker if heartbeat is due,
+        // preventing re-suspend during execution.
+        const tenantRef = registry.tenants[idx];
+        if (tenantRef) {
+          await vsock
+            .pokeHeartbeat(
+              tenantRef.ipAddress,
+              config.vsock.agentPort,
+              tenantRef.agentToken,
+            )
+            .orElse(() => okAsync(undefined));
+        }
+
+        // Give the cron/heartbeat job time to start executing (runningAtMs
+        // in jobs.json or /tmp/heartbeat-active counts as an active
+        // connection and prevents re-suspend).
         idleSince.set(
           name,
           Date.now() + config.watchdog.cronWakeAheadMs + 5_000,

@@ -11,6 +11,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createServer } from "node:net";
@@ -222,6 +223,10 @@ async function handleMessage(msg) {
       return await handlePokeCron();
     case "ensure-gateway":
       return handleLaunchOpenclaw();
+    case "get-heartbeat-schedule":
+      return await handleGetHeartbeatSchedule();
+    case "poke-heartbeat":
+      return await handlePokeHeartbeat();
     case "get-active-connections":
       return handleGetActiveConnections();
     case "shutdown":
@@ -528,6 +533,159 @@ function gatewayRpc(token, method, params) {
   });
 }
 
+/** Parse duration string like "30m", "2h", "90s" to milliseconds */
+function parseDurationMs(s) {
+  const match = s.match(/^(\d+(?:\.\d+)?)\s*(s|m|h)$/);
+  if (!match) {
+    return null;
+  }
+  const value = parseFloat(match[1]);
+  const unit = match[2];
+  const multipliers = { s: 1_000, m: 60_000, h: 3_600_000 };
+  return Math.round(value * multipliers[unit]);
+}
+
+/** Track active heartbeat poll interval so we can clear it */
+let heartbeatPollInterval = null;
+let heartbeatSafetyTimeout = null;
+
+async function handleGetHeartbeatSchedule() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (!token || !gatewayProcess) {
+    return JSON.stringify({ enabled: false, intervalMs: 0, nextBeatAtMs: 0 });
+  }
+
+  // Read heartbeat interval from OpenClaw config
+  let intervalMs = 0;
+  try {
+    const cfg = JSON.parse(
+      readFileSync("/root/.openclaw/openclaw.json", "utf-8"),
+    );
+    const every = cfg?.agents?.defaults?.heartbeat?.every;
+    if (typeof every === "string") {
+      intervalMs = parseDurationMs(every) || 0;
+    }
+  } catch {
+    // No config or no heartbeat setting
+  }
+
+  if (intervalMs <= 0) {
+    return JSON.stringify({ enabled: false, intervalMs: 0, nextBeatAtMs: 0 });
+  }
+
+  // Get last heartbeat timestamp from gateway
+  let lastTs = 0;
+  try {
+    const result = await gatewayRpc(token, "last-heartbeat", {});
+    if (result.ok && result.data?.ts) {
+      lastTs = result.data.ts;
+    }
+  } catch (e) {
+    console.log(`[heartbeat-schedule] RPC failed: ${e.message}`);
+  }
+
+  const now = Date.now();
+  const nextBeatAtMs = lastTs > 0 ? lastTs + intervalMs : now + intervalMs;
+
+  return JSON.stringify({ enabled: true, intervalMs, nextBeatAtMs });
+}
+
+async function handlePokeHeartbeat() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (!token || !gatewayProcess) {
+    return JSON.stringify({ error: "Gateway not running" });
+  }
+
+  // Read heartbeat interval from config
+  let intervalMs = 0;
+  try {
+    const cfg = JSON.parse(
+      readFileSync("/root/.openclaw/openclaw.json", "utf-8"),
+    );
+    const every = cfg?.agents?.defaults?.heartbeat?.every;
+    if (typeof every === "string") {
+      intervalMs = parseDurationMs(every) || 0;
+    }
+  } catch {}
+
+  if (intervalMs <= 0) {
+    return JSON.stringify({ ok: true, monitoring: false });
+  }
+
+  // Get last heartbeat timestamp
+  let baselineTs = 0;
+  try {
+    const result = await gatewayRpc(token, "last-heartbeat", {});
+    if (result.ok && result.data?.ts) {
+      baselineTs = result.data.ts;
+    }
+  } catch (e) {
+    console.log(`[poke-heartbeat] RPC failed: ${e.message}`);
+    return JSON.stringify({ ok: true, monitoring: false });
+  }
+
+  // Check if heartbeat is due
+  const now = Date.now();
+  if (baselineTs > 0 && baselineTs + intervalMs > now) {
+    console.log(
+      `[poke-heartbeat] Not due yet (next in ${Math.round((baselineTs + intervalMs - now) / 1000)}s)`,
+    );
+    return JSON.stringify({ ok: true, monitoring: false });
+  }
+
+  // Heartbeat is due — write marker and start polling
+  console.log(
+    "[poke-heartbeat] Heartbeat is due, writing marker and starting poll",
+  );
+  const startedAtMs = now;
+  writeFileSync(
+    "/tmp/heartbeat-active",
+    JSON.stringify({ startedAtMs, baselineTs }),
+  );
+
+  // Clear any previous poll/timeout
+  if (heartbeatPollInterval) {
+    clearInterval(heartbeatPollInterval);
+  }
+  if (heartbeatSafetyTimeout) {
+    clearTimeout(heartbeatSafetyTimeout);
+  }
+
+  // Poll last-heartbeat every 10s to detect completion
+  heartbeatPollInterval = setInterval(async () => {
+    try {
+      const result = await gatewayRpc(token, "last-heartbeat", {});
+      if (result.ok && result.data?.ts && result.data.ts > baselineTs) {
+        console.log("[poke-heartbeat] Heartbeat completed, removing marker");
+        clearInterval(heartbeatPollInterval);
+        heartbeatPollInterval = null;
+        clearTimeout(heartbeatSafetyTimeout);
+        heartbeatSafetyTimeout = null;
+        try {
+          unlinkSync("/tmp/heartbeat-active");
+        } catch {}
+      }
+    } catch (e) {
+      console.log(`[poke-heartbeat] Poll failed: ${e.message}`);
+    }
+  }, 10_000);
+
+  // Safety timeout: 10 minutes
+  heartbeatSafetyTimeout = setTimeout(() => {
+    console.log("[poke-heartbeat] Safety timeout reached, removing marker");
+    if (heartbeatPollInterval) {
+      clearInterval(heartbeatPollInterval);
+      heartbeatPollInterval = null;
+    }
+    heartbeatSafetyTimeout = null;
+    try {
+      unlinkSync("/tmp/heartbeat-active");
+    } catch {}
+  }, 600_000);
+
+  return JSON.stringify({ ok: true, monitoring: true });
+}
+
 function handleGetActiveConnections() {
   try {
     const tcp = readFileSync("/proc/net/tcp", "utf-8");
@@ -572,6 +730,20 @@ function handleGetActiveConnections() {
       }
     } catch {
       // No cron jobs file — ignore
+    }
+
+    // Check for active heartbeat execution
+    try {
+      const raw = readFileSync("/tmp/heartbeat-active", "utf-8");
+      const data = JSON.parse(raw);
+      if (
+        typeof data.startedAtMs === "number" &&
+        Date.now() - data.startedAtMs < 600_000
+      ) {
+        count++;
+      }
+    } catch {
+      // No heartbeat marker — ignore
     }
 
     return JSON.stringify({ activeConnections: count });

@@ -18,12 +18,19 @@ export interface CronScheduleInfo {
   schedule?: CronSchedule | null;
 }
 
+export interface HeartbeatScheduleInfo {
+  enabled: boolean;
+  intervalMs: number;
+  nextBeatAtMs: number;
+}
+
 export interface SuspendInfo {
   suspendedAt: string;
   snapshotDir: string;
   cronSchedules: CronScheduleInfo[];
   nextWakeAtMs: number | null;
   lastRxBytes: number;
+  heartbeatSchedule?: HeartbeatScheduleInfo | null;
 }
 
 export interface Tenant {
