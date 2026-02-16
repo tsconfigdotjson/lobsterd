@@ -413,27 +413,18 @@ function gatewayRpc(token, method, params) {
     };
 
     const timer = setTimeout(() => {
-      console.log(`[gatewayRpc] ${method}: timeout after 10s`);
       settle(reject, new Error("timeout"));
       try {
         ws.close();
       } catch {}
     }, 10000);
 
-    console.log(`[gatewayRpc] ${method}: connecting to ws://127.0.0.1:9000`);
     const ws = new WebSocket("ws://127.0.0.1:9000");
     let nextId = 1;
-
-    ws.onopen = () => {
-      console.log(`[gatewayRpc] ${method}: WebSocket opened`);
-    };
 
     ws.onmessage = (event) => {
       try {
         const msg = JSON.parse(event.data);
-        console.log(
-          `[gatewayRpc] ${method}: received ${msg.type}${msg.event ? ` ${msg.event}` : ""}${msg.id ? ` id=${msg.id}` : ""} ok=${msg.ok}`,
-        );
 
         // Step 1: Connect challenge → authenticate with device identity
         if (msg.type === "event" && msg.event === "connect.challenge") {
@@ -466,9 +457,6 @@ function gatewayRpc(token, method, params) {
         // Step 2: Connect response → send the actual RPC
         if (msg.type === "res" && msg.id === "1") {
           if (!msg.ok) {
-            console.log(
-              `[gatewayRpc] ${method}: connect rejected: ${JSON.stringify(msg.error)}`,
-            );
             settle(reject, new Error("connect rejected"));
             ws.close();
             return;
@@ -485,7 +473,6 @@ function gatewayRpc(token, method, params) {
           ws.close();
         }
       } catch (e) {
-        console.log(`[gatewayRpc] ${method}: error in onmessage: ${e.message}`);
         try {
           ws.close();
         } catch {}
@@ -493,17 +480,11 @@ function gatewayRpc(token, method, params) {
       }
     };
 
-    ws.onerror = (err) => {
-      console.log(
-        `[gatewayRpc] ${method}: onerror: ${err?.message || "unknown"}`,
-      );
+    ws.onerror = () => {
       settle(reject, new Error("WebSocket connection failed"));
     };
 
-    ws.onclose = (event) => {
-      console.log(
-        `[gatewayRpc] ${method}: onclose code=${event?.code} reason=${event?.reason || "n/a"}`,
-      );
+    ws.onclose = () => {
       settle(reject, new Error("WebSocket closed before completion"));
     };
   });

@@ -105,6 +105,7 @@ depend() {
   need net
 }
 SVC
+# NOTE: output_log/error_log kept for operational visibility
 chmod 0755 "$MOUNT_DIR/etc/init.d/lobster-agent"
 ln -sf /etc/init.d/lobster-agent "$MOUNT_DIR/etc/runlevels/default/lobster-agent"
 
