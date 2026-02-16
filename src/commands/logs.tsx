@@ -5,7 +5,15 @@ import { fetchLogs } from "../system/logs.js";
 import type { Tenant } from "../types/index.js";
 import { LogStream } from "../ui/LogStream.js";
 
-function LogsApp({ tenant, agentPort }: { tenant: Tenant; agentPort: number }) {
+function LogsApp({
+  tenant,
+  agentPort,
+  service,
+}: {
+  tenant: Tenant;
+  agentPort: number;
+  service?: string;
+}) {
   const [lines, setLines] = useState<string[]>([]);
   const { exit } = useApp();
 
@@ -25,6 +33,7 @@ function LogsApp({ tenant, agentPort }: { tenant: Tenant; agentPort: number }) {
             tenant.ipAddress,
             agentPort,
             tenant.agentToken,
+            service,
           );
           if (logs) {
             const parts = logs.split("\n").filter(Boolean);
@@ -41,14 +50,19 @@ function LogsApp({ tenant, agentPort }: { tenant: Tenant; agentPort: number }) {
     return () => {
       cancelled = true;
     };
-  }, [agentPort, tenant.agentToken, tenant.ipAddress]);
+  }, [agentPort, service, tenant.agentToken, tenant.ipAddress]);
 
-  return <LogStream title={`${tenant.name} — logs`} lines={lines} />;
+  return (
+    <LogStream
+      title={`${tenant.name} — ${service || "gateway"} logs`}
+      lines={lines}
+    />
+  );
 }
 
 export async function runLogs(
   name: string,
-  _opts: { service?: string } = {},
+  opts: { service?: string } = {},
 ): Promise<number> {
   const configResult = await loadConfig();
   if (configResult.isErr()) {
@@ -76,6 +90,7 @@ export async function runLogs(
         tenant.ipAddress,
         config.vsock.agentPort,
         tenant.agentToken,
+        opts.service,
       );
       if (logs) {
         process.stdout.write(`${logs}\n`);
@@ -90,7 +105,11 @@ export async function runLogs(
   }
 
   const { waitUntilExit } = render(
-    <LogsApp tenant={tenant} agentPort={config.vsock.agentPort} />,
+    <LogsApp
+      tenant={tenant}
+      agentPort={config.vsock.agentPort}
+      service={opts.service}
+    />,
   );
 
   await waitUntilExit();

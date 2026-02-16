@@ -203,12 +203,17 @@ async function handleMessage(msg) {
       return handleLaunchOpenclaw();
     case "get-stats":
       return handleGetStats();
-    case "get-logs":
+    case "get-logs": {
+      const logFile =
+        msg.service === "agent"
+          ? "/tmp/lobster-agent.log"
+          : "/tmp/openclaw-gateway.log";
       try {
-        return readFileSync("/tmp/openclaw-gateway.log", "utf-8").slice(-4000);
+        return readFileSync(logFile, "utf-8").slice(-4000);
       } catch {
         return "No logs available";
       }
+    }
     case "set-time":
       return handleSetTime(msg.timestampMs);
     case "get-cron-schedules":
