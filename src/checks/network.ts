@@ -82,10 +82,11 @@ export function checkCaddyRoute(
   return caddy
     .listRoutes(adminApi)
     .map((routes): HealthCheckResult => {
-      const found = routes.some(
-        (r) =>
-          (r as Record<string, unknown>)?.["@id"] === `lobster-${tenant.name}`,
-      );
+      const id = (r: unknown) =>
+        (r as Record<string, unknown>)?.["@id"] as string | undefined;
+      const found =
+        routes.some((r) => id(r) === `lobster-${tenant.name}`) &&
+        routes.some((r) => id(r) === `lobster-${tenant.name}-ws`);
       return found
         ? {
             check: "net.caddy-route",

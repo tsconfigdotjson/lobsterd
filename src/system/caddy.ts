@@ -39,44 +39,62 @@ export function addRoute(
   guestIp: string,
   guestPort: number,
 ): ResultAsync<void, LobsterError> {
-  const route = {
-    "@id": `lobster-${tenantName}`,
-    match: [{ host: [`${tenantName}.${domain}`] }],
+  const host = `${tenantName}.${domain}`;
+  const upstream = { dial: `${guestIp}:${guestPort}` };
+  const transport = { protocol: "http", dial_timeout: "3s" };
+  const loadBalancing = { try_duration: "30s", try_interval: "500ms" };
+
+  // WebSocket route must come first — matches requests with Connection: Upgrade
+  // and proxies without setting Connection: close (which would break the upgrade).
+  const wsRoute = {
+    "@id": `lobster-${tenantName}-ws`,
+    match: [{ host: [host], header: { Connection: ["*Upgrade*"] } }],
     handle: [
       {
         handler: "reverse_proxy",
-        upstreams: [{ dial: `${guestIp}:${guestPort}` }],
-        transport: {
-          protocol: "http",
-          dial_timeout: "3s",
-        },
-        load_balancing: {
-          try_duration: "30s",
-          try_interval: "500ms",
-        },
+        upstreams: [upstream],
+        transport,
+        load_balancing: loadBalancing,
+      },
+    ],
+  };
+
+  // HTTP route sets Connection: close to prevent Caddy from pooling idle
+  // upstream connections, which would be counted as active by the guest
+  // agent and block auto-suspend.
+  const httpRoute = {
+    "@id": `lobster-${tenantName}`,
+    match: [{ host: [host] }],
+    handle: [
+      {
+        handler: "reverse_proxy",
+        upstreams: [upstream],
+        transport,
+        load_balancing: loadBalancing,
         headers: {
-          request: {
-            set: { Connection: ["close"] },
-          },
+          request: { set: { Connection: ["close"] } },
         },
       },
     ],
   };
-  return caddyApi(
-    adminApi,
-    "POST",
-    "/config/apps/http/servers/lobster/routes",
-    route,
-  ).map(() => undefined);
+
+  const routesPath = "/config/apps/http/servers/lobster/routes";
+  return caddyApi(adminApi, "POST", routesPath, wsRoute)
+    .andThen(() => caddyApi(adminApi, "POST", routesPath, httpRoute))
+    .map(() => undefined);
 }
 
 export function removeRoute(
   adminApi: string,
   tenantName: string,
 ): ResultAsync<void, LobsterError> {
-  return caddyApi(adminApi, "DELETE", `/id/lobster-${tenantName}`)
-    .map(() => undefined)
-    .orElse(() => okAsync(undefined));
+  const deleteOne = (id: string) =>
+    caddyApi(adminApi, "DELETE", `/id/${id}`)
+      .map(() => undefined)
+      .orElse(() => okAsync(undefined));
+  return deleteOne(`lobster-${tenantName}-ws`).andThen(() =>
+    deleteOne(`lobster-${tenantName}`),
+  );
 }
 
 export function listRoutes(
