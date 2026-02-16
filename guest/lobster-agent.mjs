@@ -446,7 +446,7 @@ function handleGetActiveConnections() {
           (j) =>
             j.enabled !== false &&
             j.state &&
-            typeof j.state.runningAtMs === "number",
+            typeof j.state.runningAtMs === "number" && j.state.runningAtMs > 0,
         );
         if (running) {
           count++;
