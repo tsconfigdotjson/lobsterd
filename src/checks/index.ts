@@ -14,7 +14,7 @@ export function runAllChecks(
 ): ResultAsync<HealthCheckResult[], LobsterError> {
   return ResultAsync.combine([
     runVmChecks(tenant, config.vsock.healthPort),
-    runNetworkChecks(tenant, config.caddy.adminApi),
+    runNetworkChecks(tenant, config.caddy.adminApi, config),
   ]).map((groups) => groups.flat());
 }
 
