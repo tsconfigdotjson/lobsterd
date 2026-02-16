@@ -256,9 +256,17 @@ export function startScheduler(
         continue;
       }
 
-      // Don't poll or suspend if watchdog reports unhealthy — let repair finish
+      // Don't poll or suspend if watchdog reports unhealthy — let repair finish.
+      // Exclude SUSPENDED: after a cron resume the VM is active but the
+      // watchdog state lags by one tick.  Clearing idleSince here would
+      // destroy the negative-idle cron buffer set in triggerResume.
       const watchState = getStates()[tenant.name]?.state;
-      if (watchState && watchState !== "HEALTHY" && watchState !== "UNKNOWN") {
+      if (
+        watchState &&
+        watchState !== "HEALTHY" &&
+        watchState !== "UNKNOWN" &&
+        watchState !== "SUSPENDED"
+      ) {
         idleSince.delete(tenant.name);
         continue;
       }
