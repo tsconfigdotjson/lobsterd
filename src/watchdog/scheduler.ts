@@ -166,12 +166,13 @@ export function startScheduler(
       });
       clearCronTimer(name);
       if (trigger === "cron") {
-        // Restart gateway so OpenClaw runs ops.start() → runMissedJobs() → armTimer()
-        // which ensures cron fires immediately instead of waiting up to 60s
+        // Poke cron via cron.run(mode:"due") to trigger overdue jobs and re-arm
+        // the timer immediately, instead of waiting up to 60s for the stale
+        // setTimeout clamp to expire after snapshot resume
         const idx = registry.tenants.findIndex((t) => t.name === name);
         if (idx !== -1) {
           await vsock
-            .restartGateway(
+            .pokeCron(
               registry.tenants[idx].ipAddress,
               config.vsock.agentPort,
               registry.tenants[idx].agentToken,

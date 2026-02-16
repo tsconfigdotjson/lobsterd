@@ -19,9 +19,6 @@ const VSOCK_PORT = 52;
 const HEALTH_PORT = 53;
 const MAX_MESSAGE_SIZE = 1024 * 1024; // 1MB
 let gatewayProcess = null;
-let gatewayRestartCount = 0;
-let gatewayStartedAt = 0;
-let skipAutoRestart = false;
 let secrets = {};
 
 /** Parse a key=value parameter from /proc/cmdline */
@@ -171,8 +168,8 @@ async function handleMessage(msg) {
       return handleSetTime(msg.timestampMs);
     case "get-cron-schedules":
       return await handleGetCronSchedules();
-    case "restart-gateway":
-      return await handleRestartGateway();
+    case "poke-cron":
+      return await handlePokeCron();
     case "ensure-gateway":
       return handleLaunchOpenclaw();
     case "get-active-connections":
@@ -263,38 +260,9 @@ function handleLaunchOpenclaw() {
     stdio: ["ignore", logFd, logFd],
   });
 
-  gatewayStartedAt = Date.now();
-
   gatewayProcess.on("exit", (code) => {
     console.log(`[lobster-agent] Gateway process exited with code ${code}`);
     gatewayProcess = null;
-
-    if (skipAutoRestart) {
-      return;
-    }
-
-    // Reset counter if it ran for >60s (healthy run)
-    const uptime = Date.now() - gatewayStartedAt;
-    if (uptime > 60_000) {
-      gatewayRestartCount = 0;
-    } else {
-      gatewayRestartCount++;
-    }
-
-    if (gatewayRestartCount <= 5) {
-      console.log(
-        `[lobster-agent] Auto-restarting gateway in 3s (attempt ${gatewayRestartCount}/5)`,
-      );
-      setTimeout(() => {
-        if (!gatewayProcess && !skipAutoRestart) {
-          handleLaunchOpenclaw();
-        }
-      }, 3000);
-    } else {
-      console.log(
-        "[lobster-agent] Gateway exceeded max auto-restart attempts (5), giving up",
-      );
-    }
   });
 
   console.log(
@@ -303,20 +271,176 @@ function handleLaunchOpenclaw() {
   return JSON.stringify({ status: "launched", pid: gatewayProcess.pid });
 }
 
-async function handleRestartGateway() {
-  skipAutoRestart = true;
-
-  if (gatewayProcess) {
-    const exitPromise = new Promise((resolve) => {
-      gatewayProcess.on("exit", resolve);
-    });
-    gatewayProcess.kill("SIGTERM");
-    await exitPromise;
+async function handlePokeCron() {
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (!token || !gatewayProcess) {
+    return JSON.stringify({ error: "Gateway not running" });
   }
 
-  gatewayRestartCount = 0;
-  skipAutoRestart = false;
-  return handleLaunchOpenclaw();
+  // Read jobs.json to find enabled jobs with their nextRunAtMs
+  let jobs = [];
+  try {
+    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
+    const data = JSON.parse(raw);
+    if (data.version === 1 && Array.isArray(data.jobs)) {
+      jobs = data.jobs.filter(
+        (j) =>
+          j.enabled !== false &&
+          j.state &&
+          typeof j.state.nextRunAtMs === "number",
+      );
+    }
+  } catch {
+    return JSON.stringify({ error: "No cron jobs found" });
+  }
+
+  if (jobs.length === 0) {
+    return JSON.stringify({ ok: true, triggered: 0, deferred: 0 });
+  }
+
+  const now = Date.now();
+  const overdue = jobs.filter((j) => now >= j.state.nextRunAtMs);
+  const upcoming = jobs.filter((j) => now < j.state.nextRunAtMs);
+
+  // Execute overdue jobs immediately (no mode = defaults to "force")
+  let triggered = 0;
+  if (overdue.length > 0) {
+    try {
+      triggered = await runCronJobs(
+        token,
+        overdue.map((j) => j.id),
+      );
+    } catch (e) {
+      console.log(`[lobster-agent] Poke cron (overdue) failed: ${e.message}`);
+    }
+  }
+
+  // Schedule deferred triggers for upcoming jobs at their nextRunAtMs.
+  // These timers use the fresh monotonic clock (created post-resume),
+  // so they fire at the correct wall-clock time. Uses mode "due" so
+  // if OpenClaw's own stale timer fires first, the deferred call is a no-op.
+  for (const job of upcoming) {
+    const delay = job.state.nextRunAtMs - now;
+    console.log(
+      `[lobster-agent] Deferring cron.run for ${job.id} in ${Math.round(delay / 1000)}s`,
+    );
+    setTimeout(async () => {
+      try {
+        await runCronJobs(token, [job.id], "due");
+      } catch (e) {
+        console.log(
+          `[lobster-agent] Deferred cron trigger for ${job.id} failed: ${e.message}`,
+        );
+      }
+    }, delay);
+  }
+
+  return JSON.stringify({ ok: true, triggered, deferred: upcoming.length });
+}
+
+/** Connect to gateway WebSocket and call cron.run for each job ID */
+function runCronJobs(token, jobIds, mode) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const settle = (fn, val) => {
+      if (!settled) {
+        settled = true;
+        clearTimeout(timer);
+        fn(val);
+      }
+    };
+
+    const timer = setTimeout(() => {
+      settle(reject, new Error("timeout"));
+      try {
+        ws.close();
+      } catch {}
+    }, 10000);
+
+    const ws = new WebSocket("ws://127.0.0.1:9000");
+    let nextId = 1;
+    let triggered = 0;
+    let pendingJobIdx = 0;
+
+    function sendNextJobOrFinish() {
+      if (pendingJobIdx >= jobIds.length) {
+        ws.close();
+        settle(resolve, triggered);
+        return;
+      }
+      const id = String(nextId++);
+      const params = { jobId: jobIds[pendingJobIdx] };
+      if (mode) {
+        params.mode = mode;
+      }
+      ws.send(JSON.stringify({ type: "req", id, method: "cron.run", params }));
+      pendingJobIdx++;
+    }
+
+    ws.onmessage = (event) => {
+      try {
+        const msg = JSON.parse(event.data);
+
+        // Step 1: Server sends connect challenge → authenticate
+        if (msg.type === "event" && msg.event === "connect.challenge") {
+          const id = String(nextId++);
+          ws.send(
+            JSON.stringify({
+              type: "req",
+              id,
+              method: "connect",
+              params: {
+                minProtocol: 3,
+                maxProtocol: 3,
+                client: {
+                  id: "lobster-agent",
+                  version: "1.0.0",
+                  platform: "linux",
+                  mode: "backend",
+                },
+                role: "operator",
+                scopes: ["operator.read", "operator.write"],
+                auth: { token },
+              },
+            }),
+          );
+          return;
+        }
+
+        // Step 2: Connect response → start sending cron.run requests
+        if (msg.type === "res" && msg.id === "1") {
+          if (!msg.ok) {
+            ws.close();
+            settle(reject, new Error("connect rejected"));
+            return;
+          }
+          sendNextJobOrFinish();
+          return;
+        }
+
+        // Step 3+: cron.run responses → send next or finish
+        if (msg.type === "res") {
+          if (msg.ok) {
+            triggered++;
+          }
+          sendNextJobOrFinish();
+        }
+      } catch (e) {
+        try {
+          ws.close();
+        } catch {}
+        settle(reject, e);
+      }
+    };
+
+    ws.onerror = () => {
+      settle(reject, new Error("WebSocket connection failed"));
+    };
+
+    ws.onclose = () => {
+      settle(reject, new Error("WebSocket closed before completion"));
+    };
+  });
 }
 
 function handleGetStats() {

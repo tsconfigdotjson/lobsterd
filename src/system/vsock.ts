@@ -228,18 +228,18 @@ export function setGuestTime(
   );
 }
 
-export function restartGateway(
+export function pokeCron(
   guestIp: string,
   port: number,
   agentToken: string,
 ): ResultAsync<void, LobsterError> {
   const payload = JSON.stringify({
-    type: "restart-gateway",
+    type: "poke-cron",
     token: agentToken,
   });
   return ResultAsync.fromPromise(
     (async () => {
-      const response = await tcpSend(guestIp, port, `${payload}\n`, 10_000);
+      const response = await tcpSend(guestIp, port, `${payload}\n`, 15_000);
       const data = JSON.parse(response.trim());
       if (data.error) {
         throw new Error(data.error);
@@ -247,7 +247,7 @@ export function restartGateway(
     })(),
     (e) => ({
       code: "VSOCK_CONNECT_FAILED" as const,
-      message: `Failed to restart gateway: ${e instanceof Error ? e.message : String(e)}`,
+      message: `Failed to poke cron: ${e instanceof Error ? e.message : String(e)}`,
       cause: e,
     }),
   );

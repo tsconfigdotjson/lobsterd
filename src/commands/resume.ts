@@ -147,18 +147,6 @@ export function runResume(
         .orElse(() => okAsync(undefined));
     })
     .andThen(() => {
-      // Step 5.6: Refresh cron schedules against corrected clock
-      progress("cron-refresh", "Refreshing cron schedules");
-      return vsock
-        .getCronSchedules(
-          tenant.ipAddress,
-          config.vsock.agentPort,
-          tenant.agentToken,
-        )
-        .map(() => undefined)
-        .orElse(() => okAsync(undefined));
-    })
-    .andThen(() => {
       // Step 6: Clean up snapshot files from persistent storage
       progress("cleanup", "Removing snapshot from persistent storage");
       return exec(["rm", "-rf", snapshotDir]).orElse(() =>
