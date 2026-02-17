@@ -123,10 +123,7 @@ export const suspendInfoSchema = z.object({
   snapshotDir: z.string().min(1),
   cronSchedules: z.array(cronScheduleInfoSchema),
   nextWakeAtMs: z.number().int().nullable(),
-  wakeReason: z
-    .enum(["cron", "heartbeat", "cron+heartbeat"])
-    .nullable()
-    .optional(),
+  wakeReason: z.enum(["cron", "heartbeat"]).nullable().optional(),
   lastRxBytes: z.number().int().min(0),
   heartbeatSchedule: heartbeatScheduleInfoSchema.nullable().optional(),
 });

@@ -250,14 +250,19 @@ export function runSuspend(
           nextWakeAtMs = Math.min(...wakeCandidates);
         }
 
-        const wakeReason: SuspendInfo["wakeReason"] =
-          hasCronWake && hasHeartbeatWake
-            ? "cron+heartbeat"
-            : hasCronWake
-              ? "cron"
-              : hasHeartbeatWake
-                ? "heartbeat"
-                : null;
+        // Determine which source produced the earliest wake
+        let wakeReason: SuspendInfo["wakeReason"] = null;
+        if (hasCronWake && hasHeartbeatWake && heartbeatSchedule) {
+          const cronWake =
+            Math.min(...futureRuns) - config.watchdog.cronWakeAheadMs;
+          const heartbeatWake =
+            heartbeatSchedule.nextBeatAtMs - config.watchdog.cronWakeAheadMs;
+          wakeReason = heartbeatWake <= cronWake ? "heartbeat" : "cron";
+        } else if (hasCronWake) {
+          wakeReason = "cron";
+        } else if (hasHeartbeatWake) {
+          wakeReason = "heartbeat";
+        }
 
         progress(
           "wake",

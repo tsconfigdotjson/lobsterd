@@ -29,7 +29,7 @@ export interface SuspendInfo {
   snapshotDir: string;
   cronSchedules: CronScheduleInfo[];
   nextWakeAtMs: number | null;
-  wakeReason: "cron" | "heartbeat" | "cron+heartbeat" | null;
+  wakeReason: "cron" | "heartbeat" | null;
   lastRxBytes: number;
   heartbeatSchedule?: HeartbeatScheduleInfo | null;
 }
@@ -288,7 +288,7 @@ export interface WatchdogEvents {
   "suspend-complete": {
     tenant: string;
     nextWakeAtMs: number | null;
-    wakeReason: "cron" | "heartbeat" | "cron+heartbeat" | null;
+    wakeReason: "cron" | "heartbeat" | null;
   };
   "suspend-failed": { tenant: string; error: string };
   "suspend-skipped": { tenant: string; reason: string };
