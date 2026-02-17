@@ -18,12 +18,19 @@ export interface CronScheduleInfo {
   schedule?: CronSchedule | null;
 }
 
+export interface HeartbeatScheduleInfo {
+  enabled: boolean;
+  intervalMs: number;
+  nextBeatAtMs: number;
+}
+
 export interface SuspendInfo {
   suspendedAt: string;
   snapshotDir: string;
   cronSchedules: CronScheduleInfo[];
   nextWakeAtMs: number | null;
   lastRxBytes: number;
+  heartbeatSchedule?: HeartbeatScheduleInfo | null;
 }
 
 export interface Tenant {
@@ -192,6 +199,14 @@ export interface LobsterdConfig {
   buoy?: BuoyConfig;
 }
 
+// ── Active Connections ──────────────────────────────────────────────────────
+
+export interface ActiveConnectionsInfo {
+  tcp: number;
+  cron: number;
+  heartbeat: number;
+}
+
 // ── Guest Stats ─────────────────────────────────────────────────────────────
 
 export interface GuestStats {
@@ -266,7 +281,7 @@ export interface WatchdogEvents {
   };
   "scheduler-poll": {
     tenant: string;
-    connections: number;
+    connections: ActiveConnectionsInfo | null;
     idleFor: number | null;
   };
   "suspend-start": { tenant: string };
