@@ -66,7 +66,100 @@ ssh -o StrictHostKeyChecking=no root@${HOST} "apt-get update && apt-get install 
 ssh root@${HOST} "git clone https://github.com/GratefulWorkspace/lobsterd.git /root/lobsterd"
 ```
 
-### 5. Install dependencies and run lobsterd init
+### 5. Configure OpenClaw defaults for testing
+
+Edit `src/config/defaults.ts` on the droplet to disable device auth and add `models` and `agents` to the `openclaw.defaultConfig` block:
+
+```bash
+ssh root@${HOST} "export PATH=/root/.bun/bin:\$PATH && cd /root/lobsterd && cat > /tmp/patch.js << 'SCRIPT'
+const fs = require('fs');
+const file = 'src/config/defaults.ts';
+let src = fs.readFileSync(file, 'utf8');
+src = src.replace(
+  /(auth:\s*\{\s*mode:\s*"token",?\s*\},)/s,
+  \`auth: {
+          mode: "token",
+        },
+        controlUi: {
+          dangerouslyDisableDeviceAuth: true,
+        },
+        models: {
+          providers: {
+            fireworks: {
+              baseUrl: 'https://api.fireworks.ai/inference/v1',
+              apiKey: 'fw_SM5UK6FtmAhA15UYscdTXk',
+              api: 'openai-completions',
+              models: [
+                {
+                  id: 'accounts/fireworks/models/kimi-k2p5',
+                  name: 'Kimi K2.5',
+                  contextWindow: 131072,
+                  maxTokens: 32768,
+                },
+              ],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: {
+              primary: 'fireworks/accounts/fireworks/models/kimi-k2p5',
+            },
+          },
+        },
+      },\`
+);
+fs.writeFileSync(file, src);
+SCRIPT
+node /tmp/patch.js"
+```
+
+Or manually edit the file so the `openclaw.defaultConfig` section looks like:
+
+```typescript
+openclaw: {
+    installPath: "/opt/openclaw",
+    defaultConfig: {
+      gateway: {
+        mode: "local",
+        bind: "custom",
+        port: 9000,
+        auth: {
+          mode: "token",
+        },
+        controlUi: {
+          dangerouslyDisableDeviceAuth: true,
+        },
+        models: {
+          providers: {
+            fireworks: {
+              baseUrl: 'https://api.fireworks.ai/inference/v1',
+              apiKey: 'fw_SM5UK6FtmAhA15UYscdTXk',
+              api: 'openai-completions',
+              models: [
+                {
+                  id: 'accounts/fireworks/models/kimi-k2p5',
+                  name: 'Kimi K2.5',
+                  contextWindow: 131072,
+                  maxTokens: 32768,
+                },
+              ],
+            },
+          },
+        },
+        agents: {
+          defaults: {
+            model: {
+              primary: 'fireworks/accounts/fireworks/models/kimi-k2p5',
+            },
+          },
+        },
+      },
+    },
+  },
+```
+
+### 6. Install dependencies and run lobsterd init
 
 ```bash
 ssh root@${HOST} "export PATH=/root/.bun/bin:\$PATH && cd /root/lobsterd && bun install"
@@ -78,8 +171,10 @@ Then run lobsterd init:
 ssh root@${HOST} "export PATH=/root/.bun/bin:\$PATH && cd /root/lobsterd && bun run ./src/index.tsx init -d gradeprompt.com -y"
 ```
 
-### 6. Spawn the tenant
+### 7. Spawn the tenant
 
 ```bash
 ssh root@${HOST} "export PATH=/root/.bun/bin:\$PATH && cd /root/lobsterd && bun run ./src/index.tsx spawn tenant1"
 ```
+
+Wait ~45 seconds after spawn for apt to settle inside the VM before running any further commands.
