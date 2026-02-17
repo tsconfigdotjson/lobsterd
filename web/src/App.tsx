@@ -387,12 +387,12 @@ function Hero() {
         </div>
 
         {/* Right side — Image */}
-        <div className="lg:col-span-5" style={staggerX(400)}>
+        <div className="lg:col-span-5 lg:self-start lg:pt-36" style={staggerX(400)}>
           <div className="relative border border-[#D4D4D8] p-4">
             <img
               src={`${import.meta.env.BASE_URL}images/hero-claw.jpg`}
               alt="Mechanical lobster claw — brushed steel and copper"
-              className="w-full aspect-[16/10] object-cover grayscale"
+              className="w-full aspect-[14/10] object-cover object-top grayscale"
             />
             {/* Glassmorphism status card */}
             <div className="absolute bottom-7 left-7 right-7 bg-dark/50 backdrop-blur-2xl border border-white/10 p-5">
