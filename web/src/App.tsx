@@ -565,7 +565,7 @@ function FeatureRow({ feature, index }: { feature: Feature; index: number }) {
         className="absolute right-0 top-0 h-full w-1/2 overflow-hidden"
         style={{
           clipPath: hovered ? "inset(0 0 0 0)" : "inset(0 0 0 100%)",
-          transition: `clip-path 0.6s ${EXPO}`,
+          transition: `clip-path 0.15s ${EXPO}`,
         }}
       >
         <img
