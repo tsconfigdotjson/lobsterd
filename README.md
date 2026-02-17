@@ -216,15 +216,10 @@ Idle VMs can be suspended to disk via Firecracker's snapshot/restore API,
 freeing all RAM while preserving full VM state. Resume restores the VM from
 snapshot in ~3 seconds, transparently to connected clients.
 
-**Hold-based suspend inhibition** — CLI commands that interact with a tenant
-(`exec`, `configure`, `devices`, `logs`, `molt`) automatically acquire a
-hold on the guest agent before starting work. Active holds count as connections,
-preventing the watchdog from suspending the VM mid-operation. Holds have a 5-minute
-TTL with 2-minute keepalive renewal, so a dropped client won't pin a VM forever.
-
-**Auto-resume** — If a tenant is suspended when you run any of the above
-commands, it is transparently resumed before the operation proceeds. No need to
-manually `resume` first.
+**Hold-based suspend inhibition** — CLI commands (`exec`, `configure`,
+`devices`, `logs`, `molt`) acquire a hold on the guest agent, preventing the
+watchdog from suspending mid-operation. If the tenant is already suspended, it
+is transparently resumed first. Holds expire after 5 minutes if the client drops.
 
 **Idle detection** — The watchdog scheduler polls each tenant's guest agent for
 active connections (inbound, outbound, and holds). When a tenant has zero
