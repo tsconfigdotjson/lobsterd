@@ -40,10 +40,15 @@
   animation-play-state: paused;
 }
 
-/* Feature image: lower opacity on mobile */
+/* Feature rows on mobile */
 @media (max-width: 1023px) {
   .feature-image-reveal {
     opacity: 0.4;
+  }
+  .group:hover .feature-desc,
+  .group:active .feature-desc {
+    color: #18181b;
+    text-shadow: 0 2px 16px rgba(0, 0, 0, 0.3);
   }
 }
 

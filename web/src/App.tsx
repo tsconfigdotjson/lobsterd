@@ -407,7 +407,7 @@ function Hero() {
             <img
               src={`${import.meta.env.BASE_URL}images/hero-claw.jpg`}
               alt="Mechanical lobster claw — brushed steel and copper"
-              className="w-full aspect-[15/10] object-cover grayscale"
+              className="w-full aspect-[15/10] object-cover grayscale opacity-60"
             />
             {/* Glassmorphism status card */}
             <div className="absolute bottom-7 left-7 right-7 bg-dark/30 backdrop-blur-xl border border-white/10 p-5 opacity-90">
@@ -614,13 +614,7 @@ function FeatureRow({ feature, index }: { feature: Feature; index: number }) {
             >
               {feature.name}
             </h3>
-            <p
-              className="mt-3 text-sm max-w-xl leading-relaxed transition-all duration-300"
-              style={{
-                color: hovered ? "#18181b" : "rgba(24,24,27,0.5)",
-                textShadow: hovered ? "0 2px 16px rgba(0,0,0,0.3)" : "none",
-              }}
-            >
+            <p className="mt-3 text-sm text-dark/50 max-w-xl leading-relaxed feature-desc">
               {feature.desc}
             </p>
           </div>
