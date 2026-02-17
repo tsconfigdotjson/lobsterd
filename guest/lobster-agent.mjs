@@ -570,16 +570,26 @@ async function handleGetHeartbeatSchedule() {
   }
 
   if (intervalMs <= 0) {
+    console.log(`[heartbeat-schedule] disabled (intervalMs=0)`);
     return JSON.stringify({ enabled: false, intervalMs: 0, nextBeatAtMs: 0 });
   }
 
-  // Get last heartbeat timestamp from gateway
+  console.log(`[heartbeat-schedule] enabled intervalMs=${intervalMs}`);
+
+  // Get last heartbeat timestamp from gateway (short timeout — if the
+  // gateway is busy we fall back to now + intervalMs which is fine)
   let lastTs = 0;
   try {
-    const result = await gatewayRpc(token, "last-heartbeat", {});
+    const result = await Promise.race([
+      gatewayRpc(token, "last-heartbeat", {}),
+      new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("fast timeout")), 3000),
+      ),
+    ]);
     if (result.ok && result.data?.ts) {
       lastTs = result.data.ts;
     }
+    console.log(`[heartbeat-schedule] RPC ok=${result.ok} lastTs=${lastTs}`);
   } catch (e) {
     console.log(`[heartbeat-schedule] RPC failed: ${e.message}`);
   }
@@ -587,6 +597,7 @@ async function handleGetHeartbeatSchedule() {
   const now = Date.now();
   const nextBeatAtMs = lastTs > 0 ? lastTs + intervalMs : now + intervalMs;
 
+  console.log(`[heartbeat-schedule] returning enabled=true nextBeatAtMs=${nextBeatAtMs} (in ${Math.round((nextBeatAtMs - now) / 1000)}s)`);
   return JSON.stringify({ enabled: true, intervalMs, nextBeatAtMs });
 }
 
@@ -670,7 +681,7 @@ async function handlePokeHeartbeat() {
     }
   }, 10_000);
 
-  // Safety timeout: 10 minutes
+  // Safety timeout: 90 seconds (matches active-connections check cap)
   heartbeatSafetyTimeout = setTimeout(() => {
     console.log("[poke-heartbeat] Safety timeout reached, removing marker");
     if (heartbeatPollInterval) {
@@ -681,7 +692,7 @@ async function handlePokeHeartbeat() {
     try {
       unlinkSync("/tmp/heartbeat-active");
     } catch {}
-  }, 600_000);
+  }, 90_000);
 
   return JSON.stringify({ ok: true, monitoring: true });
 }
@@ -747,7 +758,7 @@ async function handleGetActiveConnections() {
     const data = JSON.parse(raw);
     if (
       typeof data.startedAtMs === "number" &&
-      Date.now() - data.startedAtMs < 600_000
+      Date.now() - data.startedAtMs < 90_000
     ) {
       heartbeat = 1;
     }
