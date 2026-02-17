@@ -263,7 +263,7 @@ function Header() {
         </div>
 
         <a
-          href="https://github.com"
+          href="https://github.com/tsconfigdotjson/lobsterd"
           target="_blank"
           rel="noopener noreferrer"
           className="rounded-full border border-dark px-5 py-2 text-[10px] font-bold uppercase tracking-[0.25em] hover:bg-dark hover:text-warm transition-all duration-300 ease-expo cursor-pointer"
@@ -368,7 +368,7 @@ function Hero() {
           {/* CTA */}
           <div className="mt-12" style={stagger(600)}>
             <a
-              href="https://github.com"
+              href="https://github.com/tsconfigdotjson/lobsterd"
               className="group inline-flex items-center gap-4 border border-dark px-8 py-4 text-[11px] font-bold uppercase tracking-[0.25em] hover:bg-dark hover:text-warm transition-all duration-500 ease-expo cursor-pointer"
             >
               Get Started
@@ -1020,7 +1020,7 @@ function Footer() {
       <div className="relative z-10 mx-auto max-w-[1600px] px-8 py-20 lg:py-28">
         {/* Large CTA */}
         <a
-          href="https://github.com"
+          href="https://github.com/tsconfigdotjson/lobsterd"
           target="_blank"
           rel="noopener noreferrer"
           className="group inline-flex items-center gap-4 cursor-pointer"
