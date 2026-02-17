@@ -686,7 +686,7 @@ async function handlePokeHeartbeat() {
   return JSON.stringify({ ok: true, monitoring: true });
 }
 
-function handleGetActiveConnections() {
+async function handleGetActiveConnections() {
   let tcp = 0;
   let cron = 0;
   let heartbeat = 0;
@@ -717,25 +717,28 @@ function handleGetActiveConnections() {
     // /proc/net/tcp unreadable — leave tcp as 0
   }
 
-  // Also check for running cron jobs — if any job has runningAtMs set,
-  // the gateway is actively executing work even without inbound connections.
-  try {
-    const raw = readFileSync("/root/.openclaw/cron/jobs.json", "utf-8");
-    const data = JSON.parse(raw);
-    if (data.version === 1 && Array.isArray(data.jobs)) {
-      const running = data.jobs.some(
-        (j) =>
-          j.enabled !== false &&
-          j.state &&
-          typeof j.state.runningAtMs === "number" &&
-          j.state.runningAtMs > 0,
-      );
-      if (running) {
-        cron = 1;
+  // Check for running cron jobs via gateway RPC (in-memory state tracks
+  // runningAtMs even though jobs.json on disk does not).
+  const token = secrets.OPENCLAW_GATEWAY_TOKEN;
+  if (token && gatewayProcess) {
+    try {
+      const result = await gatewayRpc(token, "cron.list", {});
+      if (result.ok) {
+        const jobs = result.data?.jobs ?? [];
+        const running = jobs.some(
+          (j) =>
+            j.enabled !== false &&
+            j.state &&
+            typeof j.state.runningAtMs === "number" &&
+            j.state.runningAtMs > 0,
+        );
+        if (running) {
+          cron = 1;
+        }
       }
+    } catch {
+      // RPC failed — leave cron as 0
     }
-  } catch {
-    // No cron jobs file — ignore
   }
 
   // Check for active heartbeat execution
