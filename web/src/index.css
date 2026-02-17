@@ -40,9 +40,24 @@
   animation-play-state: paused;
 }
 
+/* Feature image: lower opacity on mobile */
+@media (max-width: 1023px) {
+  .feature-image-reveal {
+    opacity: 0.4;
+  }
+}
+
+/* Smaller ORCHESTRATE on mobile */
+@media (max-width: 1023px) {
+  .hero-orchestrate {
+    font-size: clamp(3rem, 9vw, 10rem);
+  }
+}
+
 /* Smooth scroll */
 html {
   scroll-behavior: smooth;
+  overflow-x: hidden;
 }
 
 body {

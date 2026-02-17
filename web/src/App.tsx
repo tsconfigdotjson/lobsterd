@@ -344,7 +344,7 @@ function Hero() {
               </span>
             </div>
             <div style={stagger(300)}>
-              <span className="block text-[clamp(4rem,10vw,10rem)] font-black leading-[0.85] tracking-[-0.05em] stroke-text">
+              <span className="block text-[clamp(4rem,10vw,10rem)] font-black leading-[0.85] tracking-[-0.05em] stroke-text hero-orchestrate">
                 ORCHESTRATE
               </span>
             </div>
@@ -400,7 +400,7 @@ function Hero() {
 
         {/* Right side — Image */}
         <div
-          className="lg:col-span-5 lg:self-start lg:pt-36"
+          className="lg:col-span-5 lg:self-start lg:pt-36 -mt-8 lg:mt-0 mb-16 lg:mb-0"
           style={staggerX(400)}
         >
           <div className="relative border border-[#D4D4D8] p-4">
@@ -577,7 +577,7 @@ function FeatureRow({ feature, index }: { feature: Feature; index: number }) {
     >
       {/* Clip-path image reveal */}
       <div
-        className="absolute right-0 top-0 h-full w-1/2 overflow-hidden"
+        className="absolute right-0 top-0 h-full w-1/2 overflow-hidden feature-image-reveal"
         style={{
           clipPath: hovered ? "inset(0 0 0 0)" : "inset(0 0 0 100%)",
           transition: `clip-path 0.15s ${EXPO}`,
@@ -614,7 +614,13 @@ function FeatureRow({ feature, index }: { feature: Feature; index: number }) {
             >
               {feature.name}
             </h3>
-            <p className="mt-3 text-sm text-dark/50 max-w-xl leading-relaxed">
+            <p
+              className="mt-3 text-sm max-w-xl leading-relaxed transition-all duration-300"
+              style={{
+                color: hovered ? "#18181b" : "rgba(24,24,27,0.5)",
+                textShadow: hovered ? "0 2px 16px rgba(0,0,0,0.3)" : "none",
+              }}
+            >
               {feature.desc}
             </p>
           </div>
