@@ -227,6 +227,19 @@ total latency).
 agent for cron job schedules and computes the next required wake time. A timer
 resumes the VM ahead of the next scheduled job (`cronWakeAheadMs`, default 30s).
 
+**Heartbeat-aware scheduling (best-effort)** — OpenClaw agents can be configured
+with a periodic heartbeat (`agents.defaults.heartbeat.every`, e.g. `"30m"`).
+Unlike cron, where OpenClaw exposes full RPCs (`cron.list` for exact
+`nextRunAtMs` schedules, `cron.run` to poke overdue jobs on wake), the heartbeat
+system does not expose equivalent scheduling RPCs. lobsterd works around this by
+reading the heartbeat interval from the OpenClaw config file and querying the
+`last-heartbeat` RPC for the most recent timestamp, then computing the next
+expected beat on the host side and setting its own wake timer. This is
+inherently an estimate — if the gateway's internal heartbeat timer drifts (e.g.
+due to monotonic-clock skew after a VM snapshot restore), the host-side
+prediction may not match exactly. Wake reasons are tracked per-tenant (`cron` or
+`heartbeat`) so log output shows why each resume was triggered.
+
 Manual suspend and resume are also available via `lobsterd suspend <name>` and
 `lobsterd resume <name>`. The watchdog automatically detects externally-suspended
 tenants and starts sentinels for them.
