@@ -301,9 +301,8 @@ function Hero() {
   });
 
   const staggerX = (delay: number) => ({
-    opacity: inView ? 1 : 0,
     transform: inView ? "translateX(0)" : "translateX(40px)",
-    transition: `all 1.2s ${EXPO} ${delay}ms`,
+    transition: `transform 1.2s ${EXPO} ${delay}ms`,
   });
 
   return (
