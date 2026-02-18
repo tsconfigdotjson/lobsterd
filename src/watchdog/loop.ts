@@ -42,6 +42,8 @@ export function startWatchdog(
       const freshResult = await loadRegistry();
       if (freshResult.isOk()) {
         const fresh = freshResult.value;
+
+        // Update existing tenants from disk
         for (const freshTenant of fresh.tenants) {
           if (inFlight.has(freshTenant.name)) {
             continue;
@@ -51,6 +53,26 @@ export function startWatchdog(
           );
           if (idx !== -1) {
             Object.assign(registry.tenants[idx], freshTenant);
+          }
+        }
+
+        // Add newly spawned tenants
+        for (const freshTenant of fresh.tenants) {
+          if (!registry.tenants.some((t) => t.name === freshTenant.name)) {
+            registry.tenants.push(freshTenant);
+            tenantStates[freshTenant.name] = initialWatchState();
+          }
+        }
+
+        // Remove evicted tenants (skip in-flight)
+        for (let i = registry.tenants.length - 1; i >= 0; i--) {
+          const name = registry.tenants[i].name;
+          if (inFlight.has(name)) {
+            continue;
+          }
+          if (!fresh.tenants.some((t) => t.name === name)) {
+            registry.tenants.splice(i, 1);
+            delete tenantStates[name];
           }
         }
       }
