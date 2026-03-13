@@ -22,7 +22,7 @@ export interface SpawnProgress {
 
 type UndoFn = () => ResultAsync<void, LobsterError>;
 
-function computeSubnetIps(
+export function computeSubnetIps(
   subnetBase: string,
   subnetIndex: number,
 ): { hostIp: string; guestIp: string } {
