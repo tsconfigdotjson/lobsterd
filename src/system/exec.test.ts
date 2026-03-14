@@ -14,7 +14,11 @@ function makeProc(exitCode: number, stdout: string, stderr: string) {
 
 const spawnSpy = spyOn(Bun, "spawn");
 
-const { exec, execUnchecked, getUid } = await import("./exec.js");
+// Cache-busting import to bypass mock.module("./exec.js") in other test files
+const { exec, execUnchecked, getUid } = await import(
+  // @ts-expect-error — Bun supports query-string imports for cache busting
+  "./exec.js?direct"
+);
 
 afterEach(() => {
   spawnSpy.mockReset();
