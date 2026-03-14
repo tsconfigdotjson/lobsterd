@@ -19,7 +19,9 @@
     "format": "biome check --write .",
     "lint": "biome lint .",
     "check": "biome check --write .",
-    "ci": "biome format . && bun run lint && bun run typecheck",
+    "ci": "biome format . && bun run lint && bun run typecheck && bun test",
+    "test": "bun test",
+    "test:coverage": "bun test --coverage",
     "typecheck": "tsc --noEmit",
     "postinstall": "bun link"
   },
