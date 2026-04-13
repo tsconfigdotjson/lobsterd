@@ -2,10 +2,6 @@
 
 Findings from a tenant-escape-focused security audit. The items below remain after the second hardening pass, which addressed vsock removal, cgroup limits, bandwidth reduction, iptables chain isolation, connlimit, IPv6 disablement, agent auth hardening, cert permissions, and guest image hardening.
 
-## Known Issue
-
-- **Hardcoded API key** — A Fireworks AI API key is committed in `src/config/defaults.ts`. Every tenant receives it via secret injection. Move to an environment variable or external secret store before any production use.
-
 ## Architectural Limits
 
 These are inherent to Firecracker/KVM and cannot be resolved in application code.
